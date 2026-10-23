@@ -2600,6 +2600,7 @@ export const dict = {
   'chat.chatInput.placeholder.chatCompact': 'Plan, build, or ask',
   'chat.chatInput.placeholder.selectSession': 'Select or create a session to start chatting',
   'chat.dictation.start': 'Start dictation',
+  'chat.dictation.alreadyActive': 'Dictation is already active in another field.',
   'chat.dictation.overlayAria': 'Dictation',
   'chat.dictation.downloadingModel': 'Downloading speech model...',
   'chat.dictation.downloadingModelProgress': 'Downloading speech model... {percent}%',

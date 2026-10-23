@@ -5,6 +5,8 @@ import { useDeviceInfo } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { isIMECompositionEvent } from '@/lib/ime';
 import { formatShortcutForDisplay } from '@/lib/shortcuts';
+import { appendInlineText } from '@/components/chat/composer/text';
+import { ComposerDictation } from '@/components/dictation/ComposerDictation';
 import { useCommentImagePaste } from './useCommentImagePaste';
 import { useCommentSnippetPicker } from './useCommentSnippetPicker';
 
@@ -18,6 +20,8 @@ export interface InlineCommentInputProps {
   isEditing?: boolean;
   className?: string;
   maxWidth?: number;
+  startDictationOnMount?: boolean;
+  onDictationStarted?: () => void;
   /** Fill of the selected lines the comment belongs to, when the host knows it. */
   bandColor?: string;
   /**
@@ -40,7 +44,9 @@ const MAX_FIELD_HEIGHT_PX = 120;
  * annotation slot of the diff viewer's shadow tree and a block widget of the
  * file editor. The composer's CodeMirror editor there lost its caret and
  * jumped to the start of the line while typing; a textarea owns its caret and
- * selection and is not affected by the host editor's DOM.
+ * selection and is not affected by the host editor's DOM. Dictation reuses the
+ * composer overlay, but its confirm action saves this comment rather than
+ * submitting a chat message.
  */
 export function InlineCommentInput({
   initialText = '',
@@ -52,12 +58,16 @@ export function InlineCommentInput({
   isEditing = false,
   className,
   maxWidth,
+  startDictationOnMount = false,
+  onDictationStarted,
   bandColor,
   floating = false,
 }: InlineCommentInputProps) {
   const { t } = useI18n();
   const { isMobile } = useDeviceInfo();
   const [text, setText] = React.useState(initialText);
+  const [dictationActive, setDictationActive] = React.useState(false);
+  const commentInputRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveShortcut = formatShortcutForDisplay('enter');
   void isEditing;
@@ -142,10 +152,10 @@ export function InlineCommentInput({
     replaceRange(pasted.from, pasted.to, pasted.insertion);
   };
 
-  const save = () => {
-    if (text.trim()) {
-      onSave(text, normalizeRange(stableRangeRef.current));
-      void imagePaste.attachCitedImages(text);
+  const save = (value = text) => {
+    if (value.trim()) {
+      onSave(value, normalizeRange(stableRangeRef.current));
+      void imagePaste.attachCitedImages(value);
     }
   };
 
@@ -180,7 +190,9 @@ export function InlineCommentInput({
         maxWidth: maxWidth ? `${Math.max(200, Math.floor(maxWidth))}px` : undefined,
         backgroundColor: floating ? undefined : bandColor,
       }}
+      ref={commentInputRef}
       data-comment-input="true"
+      data-comment-dictation-active={dictationActive ? 'true' : undefined}
       onPointerDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
     >
@@ -191,6 +203,7 @@ export function InlineCommentInput({
             ? 'oc-glass-popover oc-glass-floating rounded-3xl ps-4'
             : 'oc-raised oc-field rounded-lg bg-[var(--surface-elevated)] ps-3',
         )}
+        data-dictation-host="true"
       >
         {snippetPicker.picker}
         <textarea
@@ -215,7 +228,22 @@ export function InlineCommentInput({
           )}
           style={{ minHeight: 0 }}
         />
-        <button
+        <ComposerDictation
+          isMobile={isMobile}
+          footerIconButtonClass="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
+          footerPaddingClass={isMobile ? 'px-1.5 py-1.5' : 'px-2.5 py-1.5'}
+          iconSizeClass="h-4 w-4"
+          sendIconSizeClass="h-4 w-4"
+          compactOverlay
+          sendActionLabel={t('inlineComment.actions.comment')}
+          sendActionIcon="attachment-2"
+          startOnMount={startDictationOnMount}
+          onStart={onDictationStarted}
+          onActiveChange={setDictationActive}
+          onInsert={(transcript) => handleTextChange(appendInlineText(text, transcript))}
+          onInsertAndSend={(transcript) => save(appendInlineText(text, transcript).trim())}
+        />
+        {!dictationActive ? <button
           type="button"
           onClick={handleSaveClick}
           onPointerDown={(e) => e.stopPropagation()}
@@ -229,7 +257,7 @@ export function InlineCommentInput({
           title={t('inlineComment.actions.comment')}
         >
           <Icon name="attachment-2" className="h-4 w-4" />
-        </button>
+        </button> : null}
       </div>
     </div>
   );

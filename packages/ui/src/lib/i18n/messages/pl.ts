@@ -1429,6 +1429,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.chatInput.placeholder.selectSession': 'Wybierz lub utwórz sesję, aby zacząć czatować',
   'chat.chatInput.placeholder.shell': 'Wpisz polecenie powłoki...',
   'chat.dictation.start': 'Rozpocznij dyktowanie',
+  'chat.dictation.alreadyActive': 'Dyktowanie jest już aktywne w innym polu.',
   'chat.dictation.overlayAria': 'Dyktowanie',
   'chat.dictation.downloadingModel': 'Pobieranie modelu mowy...',
   'chat.dictation.downloadingModelProgress': 'Pobieranie modelu mowy... {percent}%',

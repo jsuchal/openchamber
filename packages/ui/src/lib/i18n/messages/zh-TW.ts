@@ -2575,6 +2575,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.chatInput.placeholder.chatCompact': '規劃、建構或提問',
   'chat.chatInput.placeholder.selectSession': '選擇或建立會話以開始聊天',
   'chat.dictation.start': '開始語音輸入',
+  'chat.dictation.alreadyActive': '其他輸入欄位已有語音輸入正在進行。',
   'chat.dictation.overlayAria': '語音輸入',
   'chat.dictation.downloadingModel': '正在下載語音模型...',
   'chat.dictation.downloadingModelProgress': '正在下載語音模型... {percent}%',
