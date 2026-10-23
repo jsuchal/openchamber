@@ -18,6 +18,8 @@ interface PierreDiffCommentOverlaysProps {
   onCancel: () => void;
   onEdit: (draft: InlineCommentDraft) => void;
   onDelete: (draft: InlineCommentDraft) => void;
+  startDictationOnOpen?: boolean;
+  onDictationStarted?: () => void;
 }
 
 function parseCssWidth(value: string): number | null {
@@ -55,6 +57,8 @@ export function PierreDiffCommentOverlays(props: PierreDiffCommentOverlaysProps)
     onCancel,
     onEdit,
     onDelete,
+    startDictationOnOpen = false,
+    onDictationStarted,
   } = props;
 
   const [retryTick, setRetryTick] = React.useState(0);
@@ -232,7 +236,9 @@ export function PierreDiffCommentOverlays(props: PierreDiffCommentOverlaysProps)
             onTextChange={onTextChange}
             fileLabel={fileLabel}
             lineRange={selection}
-            isEditing={false}
+              isEditing={false}
+              startDictationOnMount={startDictationOnOpen}
+              onDictationStarted={onDictationStarted}
             onSave={onSave}
             onCancel={onCancel}
             maxWidth={targetMaxWidth}

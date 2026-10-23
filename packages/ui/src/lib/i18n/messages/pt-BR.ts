@@ -1880,6 +1880,7 @@ export const dict: Record<I18nKey, string> = {
   'diffView.reviewDialog.toast.noSessionDirectory': 'O diretório da sessão está indisponível',
   'diffView.reviewDialog.toast.startFailed': 'Falha ao iniciar o fluxo de revisão',
   'chat.dictation.start': 'Iniciar ditado',
+  'chat.dictation.alreadyActive': 'Já há um ditado ativo em outro campo.',
   'chat.dictation.overlayAria': 'Ditado',
   'chat.dictation.downloadingModel': 'Baixando o modelo de fala...',
   'chat.dictation.downloadingModelProgress': 'Baixando o modelo de fala... {percent}%',

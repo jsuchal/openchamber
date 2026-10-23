@@ -20,6 +20,8 @@ export interface InlineCommentInputProps {
   isEditing?: boolean;
   className?: string;
   maxWidth?: number;
+  startDictationOnMount?: boolean;
+  onDictationStarted?: () => void;
   /** Fill of the selected lines the comment belongs to, when the host knows it. */
   bandColor?: string;
   /**
@@ -56,6 +58,8 @@ export function InlineCommentInput({
   isEditing = false,
   className,
   maxWidth,
+  startDictationOnMount = false,
+  onDictationStarted,
   bandColor,
   floating = false,
 }: InlineCommentInputProps) {
@@ -63,6 +67,7 @@ export function InlineCommentInput({
   const { isMobile } = useDeviceInfo();
   const [text, setText] = React.useState(initialText);
   const [dictationActive, setDictationActive] = React.useState(false);
+  const commentInputRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveShortcut = formatShortcutForDisplay('enter');
   void isEditing;
@@ -185,14 +190,15 @@ export function InlineCommentInput({
         maxWidth: maxWidth ? `${Math.max(200, Math.floor(maxWidth))}px` : undefined,
         backgroundColor: floating ? undefined : bandColor,
       }}
+      ref={commentInputRef}
       data-comment-input="true"
+      data-comment-dictation-active={dictationActive ? 'true' : undefined}
       onPointerDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
     >
       <div
         className={cn(
           'relative flex items-end gap-2 py-1 pe-1 text-foreground',
-          dictationActive && 'min-h-[180px]',
           floating
             ? 'oc-glass-popover oc-glass-floating rounded-3xl ps-4'
             : 'oc-raised oc-field rounded-lg bg-[var(--surface-elevated)] ps-3',
@@ -225,17 +231,19 @@ export function InlineCommentInput({
         <ComposerDictation
           isMobile={isMobile}
           footerIconButtonClass="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
-          footerPaddingClass="px-1 py-1"
+          footerPaddingClass={isMobile ? 'px-1.5 py-1.5' : 'px-2.5 py-1.5'}
           iconSizeClass="h-4 w-4"
           sendIconSizeClass="h-4 w-4"
-          middleClickStartsDictation
+          compactOverlay
           sendActionLabel={t('inlineComment.actions.comment')}
           sendActionIcon="attachment-2"
+          startOnMount={startDictationOnMount}
+          onStart={onDictationStarted}
           onActiveChange={setDictationActive}
           onInsert={(transcript) => handleTextChange(appendInlineText(text, transcript))}
           onInsertAndSend={(transcript) => save(appendInlineText(text, transcript).trim())}
         />
-        <button
+        {!dictationActive ? <button
           type="button"
           onClick={handleSaveClick}
           onPointerDown={(e) => e.stopPropagation()}
@@ -249,7 +257,7 @@ export function InlineCommentInput({
           title={t('inlineComment.actions.comment')}
         >
           <Icon name="attachment-2" className="h-4 w-4" />
-        </button>
+        </button> : null}
       </div>
     </div>
   );

@@ -2324,6 +2324,7 @@ export const dict = {
   'chat.chatInput.placeholder.chatCompact': 'Planen, bauen oder fragen',
   'chat.chatInput.placeholder.selectSession': 'Sitzung auswählen oder erstellen, um zu chatten',
   'chat.dictation.start': 'Dictation starten',
+  'chat.dictation.alreadyActive': 'In einem anderen Feld läuft bereits eine Diktierung.',
   'chat.dictation.overlayAria': 'Dictation',
   'chat.dictation.downloadingModel': 'Sprachmodell wird heruntergeladen...',
   'chat.dictation.downloadingModelProgress': 'Sprachmodell wird heruntergeladen... {percent}%',

@@ -2541,6 +2541,7 @@ export const dict = {
   'chat.chatInput.placeholder.chatCompact': 'לתכנן, לבנות או לשאול',
   'chat.chatInput.placeholder.selectSession': 'יש לבחור או ליצור הפעלה כדי להתחיל בצ\'אט',
   'chat.dictation.start': 'התחל הכתבה',
+  'chat.dictation.alreadyActive': 'הכתבה כבר פעילה בשדה אחר.',
   'chat.dictation.overlayAria': 'הכתבה',
   'chat.dictation.downloadingModel': 'מוריד מודל דיבור…',
   'chat.dictation.downloadingModelProgress': 'מוריד מודל דיבור… {percent}%',

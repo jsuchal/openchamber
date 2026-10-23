@@ -2541,6 +2541,7 @@ export const dict = {
   'chat.chatInput.placeholder.chatCompact': 'خطّط أو ابنِ أو اسأل',
   'chat.chatInput.placeholder.selectSession': 'اختر جلسة أو أنشئ واحدة لبدء المحادثة',
   'chat.dictation.start': 'بدء الإملاء',
+  'chat.dictation.alreadyActive': 'الإملاء نشط بالفعل في حقل آخر.',
   'chat.dictation.overlayAria': 'الإملاء',
   'chat.dictation.downloadingModel': 'جارٍ تنزيل نموذج الكلام…',
   'chat.dictation.downloadingModelProgress': 'جارٍ تنزيل نموذج الكلام… {percent}%',

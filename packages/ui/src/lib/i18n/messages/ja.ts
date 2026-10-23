@@ -2596,6 +2596,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.chatInput.placeholder.chatCompact': '計画、構築、質問',
   'chat.chatInput.placeholder.selectSession': 'セッションを選択または作成してチャットを開始',
   'chat.dictation.start': '音声入力を開始',
+  'chat.dictation.alreadyActive': '別の入力欄で音声入力がすでに進行中です。',
   'chat.dictation.overlayAria': '音声入力',
   'chat.dictation.downloadingModel': '音声モデルをダウンロード中...',
   'chat.dictation.downloadingModelProgress': '音声モデルをダウンロード中... {percent}%',

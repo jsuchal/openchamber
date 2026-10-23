@@ -37,6 +37,8 @@ import { useDeviceInfo } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { cn, isMacOS } from '@/lib/utils';
 import { hideWhitespaceChanges } from '@/lib/diff/hideWhitespaceChanges';
+import { COMMENT_DICTATION_START_EVENT, COMMENT_DICTATION_SUBMIT_EVENT } from '@/lib/dictation/dictation-owner';
+import { suppressMiddleClickPaste } from '@/lib/dictation/middle-click';
 import type { PatchHunkAnchor } from '@/lib/diff/patchFileDiff';
 import { getDiffLinesText } from '@/lib/diff/selectedDiffLines';
 import { findWordAtOffset } from '@/lib/diff/findWord';
@@ -1068,6 +1070,7 @@ const PierreDiffViewerBody: React.FC<
     startEdit,
     deleteDraft,
   } = diffCommentController;
+  const [dictationOnCommentOpen, setDictationOnCommentOpen] = React.useState(false);
 
   const selectionRef = useRef<SelectedLineRange | null>(null);
   const editingDraftIdRef = useRef<string | null>(null);
@@ -1384,6 +1387,61 @@ const PierreDiffViewerBody: React.FC<
       setCommentText('');
     }
   }, [applySelection, enableComments, setCommentText]);
+
+  // Pierre deliberately treats a mouse middle-button pointerdown as a
+  // non-selection gesture. On the gutter's + utility, reinterpret that gesture
+  // as "open this line comment and start dictation" before Pierre sees it.
+  useEffect(() => {
+    const root = diffRootRef.current;
+    if (!root || !enableComments) return;
+    const onPointerDownCapture = (event: PointerEvent) => {
+      if (event.button !== 1) return;
+      const path = event.composedPath();
+      const isGutterPlus = path.some((item) => item instanceof Element
+        && (item.hasAttribute('data-utility-button')
+          || item.hasAttribute('data-gutter-utility-slot')
+          || item.getAttribute('slot') === 'gutter-utility-slot'));
+      const isDiffRow = path.some((item) => item instanceof Element
+        && (item.hasAttribute('data-line') || item.hasAttribute('data-column-number')));
+
+      const diffHost = root.querySelector('diffs-container');
+      const activeComment = diffHost?.shadowRoot?.querySelector('[data-comment-dictation-active="true"]')
+        ?? root.querySelector('[data-comment-dictation-active="true"]');
+      if (activeComment) {
+        suppressMiddleClickPaste(event);
+        activeComment.dispatchEvent(new CustomEvent(COMMENT_DICTATION_SUBMIT_EVENT, {
+          bubbles: true,
+          composed: true,
+        }));
+        return;
+      }
+
+      if (!isGutterPlus && !isDiffRow) return;
+
+      const openComment = diffHost?.shadowRoot?.querySelector('[data-comment-input]')
+        ?? root.querySelector('[data-comment-input]');
+      if (openComment) {
+        suppressMiddleClickPaste(event);
+        openComment.dispatchEvent(new CustomEvent(COMMENT_DICTATION_START_EVENT, {
+          bubbles: true,
+          composed: true,
+        }));
+        return;
+      }
+
+      const hoveredLine = diffInstanceRef.current?.getHoveredLine();
+      if (!hoveredLine) return;
+      suppressMiddleClickPaste(event);
+      setDictationOnCommentOpen(true);
+      handleGutterUtilityClick({
+        start: hoveredLine.lineNumber,
+        end: hoveredLine.lineNumber,
+        side: hoveredLine.side,
+      });
+    };
+    root.addEventListener('pointerdown', onPointerDownCapture, true);
+    return () => root.removeEventListener('pointerdown', onPointerDownCapture, true);
+  }, [enableComments, handleGutterUtilityClick]);
 
   // Clicking anywhere on a diff line (not only its number cell) toggles a
   // single-line comment selection, matching the "+" utility's target.
@@ -2102,6 +2160,8 @@ const PierreDiffViewerBody: React.FC<
         startEdit(draft);
       }}
       onDelete={deleteDraft}
+      startDictationOnOpen={dictationOnCommentOpen}
+      onDictationStarted={() => setDictationOnCommentOpen(false)}
     />
   ) : null;
 

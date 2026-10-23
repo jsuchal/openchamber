@@ -2600,6 +2600,7 @@ export const dict = {
   'chat.chatInput.placeholder.chatCompact': 'Plan, bouw of vraag',
   'chat.chatInput.placeholder.selectSession': 'Selecteer of maak een sessie om te beginnen met chatten',
   'chat.dictation.start': 'Dictaat starten',
+  'chat.dictation.alreadyActive': 'Er loopt al een dicteersessie in een ander veld.',
   'chat.dictation.overlayAria': 'Dictaat',
   'chat.dictation.downloadingModel': 'Spraakmodel downloaden...',
   'chat.dictation.downloadingModelProgress': 'Spraakmodel downloaden... {percent}%',

@@ -2430,6 +2430,7 @@ export const dict = {
   'chat.chatInput.placeholder.chatCompact': 'Planla, oluştur veya sor',
   'chat.chatInput.placeholder.selectSession': 'Sohbete başlamak için bir session seç veya oluştur',
   'chat.dictation.start': 'Dikteyi başlat',
+  'chat.dictation.alreadyActive': 'Başka bir alanda zaten dikte yapılıyor.',
   'chat.dictation.overlayAria': 'Dikte',
   'chat.dictation.downloadingModel': 'Konuşma modeli indiriliyor...',
   'chat.dictation.downloadingModelProgress': 'Konuşma modeli indiriliyor... {percent}%',
