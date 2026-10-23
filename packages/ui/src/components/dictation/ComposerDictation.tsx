@@ -14,6 +14,7 @@
 import React from 'react';
 
 import { Icon } from '@/components/icon/Icon';
+import type { IconName } from '@/components/icon/icons';
 import { useI18n } from '@/lib/i18n';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { cn } from '@/lib/utils';
@@ -52,6 +53,11 @@ interface ComposerDictationProps {
     /** Render the mic trigger button (default). Pass false when the host renders
         its own trigger and only needs the overlay + recording engine. */
     renderTrigger?: boolean;
+    /** Middle-clicking the trigger starts dictation for compact comment fields. */
+    middleClickStartsDictation?: boolean;
+    /** The confirm action can attach a comment instead of sending a chat message. */
+    sendActionLabel?: string;
+    sendActionIcon?: IconName;
     /** Rendered at the very top of the active overlay (e.g. the mobile composer
         drag handle, so swipe-expand keeps working in Listening mode). */
     topAccessory?: React.ReactNode;
@@ -124,6 +130,9 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
     onActiveChange,
     onContentHeightChange,
     renderTrigger = true,
+    middleClickStartsDictation = false,
+    sendActionLabel,
+    sendActionIcon = 'send-plane-2',
     topAccessory,
 }) => {
     const { t } = useI18n();
@@ -412,6 +421,12 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
                     onClick={() => {
                         void startDictation();
                     }}
+                    onAuxClick={middleClickStartsDictation ? (event) => {
+                        if (event.button !== 1) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void startDictation();
+                    } : undefined}
                     disabled={disabled || isActive}
                     title={dictationShortcut ? `${t('chat.dictation.start')} (${dictationShortcut})` : t('chat.dictation.start')}
                     aria-label={t('chat.dictation.start')}
@@ -541,10 +556,10 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
                                         {...keepKeyboardFocusProps}
                                         className={cn(footerIconButtonClass, 'text-primary hover:text-primary')}
                                         onClick={() => confirmWith('send')}
-                                        title={t('chat.dictation.insertAndSend')}
-                                        aria-label={t('chat.dictation.insertAndSend')}
+                                        title={sendActionLabel ?? t('chat.dictation.insertAndSend')}
+                                        aria-label={sendActionLabel ?? t('chat.dictation.insertAndSend')}
                                     >
-                                        <Icon name="send-plane-2" className={sendIconSizeClass} />
+                                        <Icon name={sendActionIcon} className={sendIconSizeClass} />
                                     </button>
                                 </>
                             ) : status === 'uploading' ? (

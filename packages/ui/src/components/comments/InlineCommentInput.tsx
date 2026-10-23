@@ -5,6 +5,8 @@ import { useDeviceInfo } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { isIMECompositionEvent } from '@/lib/ime';
 import { formatShortcutForDisplay } from '@/lib/shortcuts';
+import { appendInlineText } from '@/components/chat/composer/text';
+import { ComposerDictation } from '@/components/dictation/ComposerDictation';
 import { useCommentImagePaste } from './useCommentImagePaste';
 import { useCommentSnippetPicker } from './useCommentSnippetPicker';
 
@@ -40,7 +42,9 @@ const MAX_FIELD_HEIGHT_PX = 120;
  * annotation slot of the diff viewer's shadow tree and a block widget of the
  * file editor. The composer's CodeMirror editor there lost its caret and
  * jumped to the start of the line while typing; a textarea owns its caret and
- * selection and is not affected by the host editor's DOM.
+ * selection and is not affected by the host editor's DOM. Dictation reuses the
+ * composer overlay, but its confirm action saves this comment rather than
+ * submitting a chat message.
  */
 export function InlineCommentInput({
   initialText = '',
@@ -58,6 +62,7 @@ export function InlineCommentInput({
   const { t } = useI18n();
   const { isMobile } = useDeviceInfo();
   const [text, setText] = React.useState(initialText);
+  const [dictationActive, setDictationActive] = React.useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveShortcut = formatShortcutForDisplay('enter');
   void isEditing;
@@ -142,10 +147,10 @@ export function InlineCommentInput({
     replaceRange(pasted.from, pasted.to, pasted.insertion);
   };
 
-  const save = () => {
-    if (text.trim()) {
-      onSave(text, normalizeRange(stableRangeRef.current));
-      void imagePaste.attachCitedImages(text);
+  const save = (value = text) => {
+    if (value.trim()) {
+      onSave(value, normalizeRange(stableRangeRef.current));
+      void imagePaste.attachCitedImages(value);
     }
   };
 
@@ -187,10 +192,12 @@ export function InlineCommentInput({
       <div
         className={cn(
           'relative flex items-end gap-2 py-1 pe-1 text-foreground',
+          dictationActive && 'min-h-[180px]',
           floating
             ? 'oc-glass-popover oc-glass-floating rounded-3xl ps-4'
             : 'oc-raised oc-field rounded-lg bg-[var(--surface-elevated)] ps-3',
         )}
+        data-dictation-host="true"
       >
         {snippetPicker.picker}
         <textarea
@@ -214,6 +221,19 @@ export function InlineCommentInput({
             isMobile && 'text-base leading-6'
           )}
           style={{ minHeight: 0 }}
+        />
+        <ComposerDictation
+          isMobile={isMobile}
+          footerIconButtonClass="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
+          footerPaddingClass="px-1 py-1"
+          iconSizeClass="h-4 w-4"
+          sendIconSizeClass="h-4 w-4"
+          middleClickStartsDictation
+          sendActionLabel={t('inlineComment.actions.comment')}
+          sendActionIcon="attachment-2"
+          onActiveChange={setDictationActive}
+          onInsert={(transcript) => handleTextChange(appendInlineText(text, transcript))}
+          onInsertAndSend={(transcript) => save(appendInlineText(text, transcript).trim())}
         />
         <button
           type="button"
