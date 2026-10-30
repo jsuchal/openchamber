@@ -156,10 +156,10 @@ const OverviewRow: React.FC<{
           {title}
         </span>
         {note ? (
-          <span className="shrink-0 whitespace-nowrap typography-micro text-muted-foreground/80" style={noteColor ? { color: noteColor } : undefined}>{note}</span>
+          <span className="shrink-0 whitespace-nowrap typography-micro text-muted-foreground" style={noteColor ? { color: noteColor } : undefined}>{note}</span>
         ) : null}
       </span>
-      {sub ? <span dir="auto" title={sub} className="truncate oc-ui-start-align ps-6 typography-micro text-muted-foreground/80">{sub}</span> : null}
+      {sub ? <span dir="auto" title={sub} className="truncate oc-ui-start-align ps-6 typography-micro text-muted-foreground">{sub}</span> : null}
     </>
   );
   const bodyClass = 'flex min-w-0 flex-1 flex-col gap-0.5 text-start';
@@ -200,7 +200,7 @@ const Section = React.forwardRef<HTMLElement, {
   divider?: boolean;
   children: React.ReactNode;
 }>(({ label, count, hint, action, divider = true, children }, ref) => (
-  <section ref={ref} className={cn('flex min-w-0 scroll-mt-4 flex-col gap-0.5', divider && 'border-t border-border/50 pt-5')}>
+  <section ref={ref} className={cn('flex min-w-0 scroll-mt-4 flex-col gap-0.5', divider && 'border-t border-edge pt-5')}>
     <div className="mb-0.5 flex min-h-7 items-center gap-2 px-2">
       <span className="typography-ui-label font-medium text-foreground">{label}</span>
       <span className="typography-ui-label tabular-nums text-muted-foreground">{count}</span>

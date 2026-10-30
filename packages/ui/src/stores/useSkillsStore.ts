@@ -403,11 +403,12 @@ const writeSkillSwitch = async (
   directory: string | null,
 ): Promise<string[]> => {
   const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
-  const headers = new Headers({ 'Content-Type': 'application/json' });
-  if (directory) headers.set('x-opencode-directory', directory);
   const response = await runtimeFetch(`/api/config/skill-switch${queryParams}`, {
     method: 'PUT',
-    headers,
+    // A plain object, so runtimeFetch can URI-encode a non-Latin-1 directory; Headers.set would throw.
+    headers: directory
+      ? { 'Content-Type': 'application/json', 'x-opencode-directory': directory }
+      : { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: skill.id, enabled, scope: skill.scope }),
   });
   const payload: { changed?: string[]; error?: string } | null = await response.json().catch(() => null);
@@ -515,6 +516,7 @@ export const useSkillsStore = create<SkillsStore>()(
             })();
 
             for (let attempt = 0; attempt < 3; attempt++) {
+              if (generation !== skillsGeneration) return false;
               try {
                 const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
@@ -522,6 +524,7 @@ export const useSkillsStore = create<SkillsStore>()(
                   priority: 'low',
                   headers: directory ? { 'x-opencode-directory': directory } : undefined,
                 }));
+                if (response === undefined) return false;
                 if (!response.ok) {
                   throw new Error(`Failed to list skills: ${response.status}`);
                 }

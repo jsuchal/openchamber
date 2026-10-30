@@ -11,6 +11,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useChatSessionSelection } from './chatColumnSession';
 import { useSessions } from '@/sync/sync-context';
 import * as sessionActions from '@/sync/session-actions';
+import { isFormRequestNotFoundError } from '@/sync/form-request-error';
 import { useI18n } from '@/lib/i18n';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { serializeFormAsJson, serializeFormAsMarkdown } from './formSerializers';
@@ -61,6 +62,7 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form }) => {
     // from the start and its acknowledgement travels with the reply.
     const [values, setValues] = React.useState<FormValues>(() => initialFormValues(fields, { acknowledgeExternal: true }));
     const [isResponding, setIsResponding] = React.useState(false);
+    const respondingRef = React.useRef(false);
     const [hasResponded, setHasResponded] = React.useState(false);
     const [showErrors, setShowErrors] = React.useState(false);
 
@@ -86,29 +88,44 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form }) => {
     }, []);
 
     const handleSubmit = React.useCallback(async () => {
+        if (respondingRef.current) return;
         if (!canSubmit) {
             setShowErrors(true);
             return;
         }
+        respondingRef.current = true;
         setIsResponding(true);
         try {
             await sessionActions.replyToForm(form.sessionID, form.id, buildFormAnswer(fields, values));
             setHasResponded(true);
-        } catch {
+        } catch (error) {
+            // The store removes not-found requests, so no card remains to retry.
+            if (isFormRequestNotFoundError(error)) {
+                setHasResponded(true);
+                return;
+            }
             toast.error(t('chat.formCard.submitFailed'), { description: t('chat.formCard.tryAgain') });
         } finally {
+            respondingRef.current = false;
             setIsResponding(false);
         }
     }, [canSubmit, fields, form.id, form.sessionID, t, values]);
 
     const handleCancel = React.useCallback(async () => {
+        if (respondingRef.current) return;
+        respondingRef.current = true;
         setIsResponding(true);
         try {
             await sessionActions.cancelForm(form.sessionID, form.id);
             setHasResponded(true);
-        } catch {
+        } catch (error) {
+            if (isFormRequestNotFoundError(error)) {
+                setHasResponded(true);
+                return;
+            }
             toast.error(t('chat.formCard.cancelFailed'), { description: t('chat.formCard.tryAgain') });
         } finally {
+            respondingRef.current = false;
             setIsResponding(false);
         }
     }, [form.id, form.sessionID, t]);
@@ -154,8 +171,8 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form }) => {
     return (
         <div className="group w-full pt-0 pb-2">
             <div className="chat-column">
-                <div className="-mt-1 border border-border/30 rounded-xl bg-muted/10">
-                    <div className="px-2 py-1.5 border-b border-border/20">
+                <div className="-mt-1 border border-edge-muted rounded-xl bg-muted/10">
+                    <div className="px-2 py-1.5 border-b border-edge-muted">
                         <div className="flex items-center gap-2">
                             <Icon name="question" className="h-3.5 w-3.5 text-primary" />
                             <span className="typography-meta font-medium text-foreground">
@@ -172,7 +189,7 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form }) => {
                                     onClick={() => void handleCopy('markdown')}
                                     title={t('chat.questionCard.copyMarkdown')}
                                     aria-label={t('chat.questionCard.copyMarkdown')}
-                                    className="rounded p-1 text-muted-foreground/70 transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
+                                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
                                 >
                                     <Icon name="file-text" className="h-3 w-3" />
                                 </button>
@@ -181,7 +198,7 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form }) => {
                                     onClick={() => void handleCopy('json')}
                                     title={t('chat.questionCard.copyJson')}
                                     aria-label={t('chat.questionCard.copyJson')}
-                                    className="rounded p-1 text-muted-foreground/70 transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
+                                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground"
                                 >
                                     <Icon name="code" className="h-3 w-3" />
                                 </button>
@@ -191,7 +208,7 @@ const GenericFormCard: React.FC<FormCardProps> = ({ form }) => {
 
                     <div className="px-2 py-2 space-y-1">{shown.map(renderField)}</div>
 
-                    <div className="px-2 pb-1.5 pt-1 flex items-center gap-1.5 border-t border-border/20">
+                    <div className="px-2 pb-1.5 pt-1 flex items-center gap-1.5 border-t border-edge-muted">
                         <button
                             type="button"
                             onClick={() => void handleSubmit()}

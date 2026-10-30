@@ -49,7 +49,12 @@ unsaved-changes prompt that may come first) goes through `onCloseFile` to
 including the panel's open state, its active tab, and the editor toggle, to each file surface.
 Hidden surfaces retain drafts, loaded content and scroll state. They stop
 directory and file metadata polling; reopening checks freshness once before
-normal polling resumes. Autosave is independent of visibility.
+normal polling resumes. The visible open file is watched by OpenCode
+(`lib/watchedFiles.ts`, OpenCode 2.2): its `filesystem.changed` event starts
+the same freshness check at once, and the check otherwise runs every 30
+seconds instead of every 2, only to cover a watch OpenCode lost. A file
+outside the project folder, or an OpenCode that refuses the watch, keeps the
+2-second poll. An open plan in the repository is watched the same way. Autosave is independent of visibility.
 
 Background polling never supersedes an in-flight directory read. Explicit
 refresh after file mutations does. Each directory failure remains local and
@@ -156,7 +161,8 @@ the pointer; a zoomed image larger than the viewer pans by mouse drag;
 `imageZoom.ts` holds the scale math; round arrows fixed to the viewer's
 edges, and the arrow keys while the viewer has focus and the image is at fit,
 show the previous and next image of the same folder, see below),
-`MediaArtifact` (native audio/video
+`PdfArtifact` (a frame where the runtime has a PDF viewer; elsewhere pages
+drawn by pdf.js, see below), `MediaArtifact` (native audio/video
 element, duration and dimensions once metadata loads, a stated failure when
 the runtime cannot decode the codec), `FontArtifact` (a specimen under a
 throwaway `FontFace` family removed when the tab closes), `TableArtifact`
@@ -186,6 +192,47 @@ Non-text artifacts the browser must own (PDF, audio, video, fonts) are loaded
 through `getRuntimeUrlResolver().authenticatedAsset('/api/fs/raw', …)` with
 the scoped URL token; the server streams byte ranges so playback can seek.
 Images keep the object-URL/data-URL path.
+
+`useRawAssetUrl` makes that URL once per file, revision and runtime and holds
+it, so the shared token rotating never touches an open preview: a PDF stays
+on its page, a player keeps playing, a font stays registered. The server
+checks the token when a request starts, so a held URL keeps working for the
+document it already loads. A player asks for more ranges later, and one asked
+for after the token expired gets a 401; `MediaArtifact` then asks `renew` for
+a URL with a fresh token and resumes at the same position, speed and play
+state. One
+renewal per ten seconds; a renewal that returns the same URL, or fails, shows
+"cannot be played". A file changed on disk bumps the revision, which gives the
+preview a new URL and loads the new bytes.
+
+### Why the URL is held and not rebuilt with every new token
+
+A rebuilt URL is a new document: the iframe navigates and the media element
+reloads, which put PDFs back on page 1 and stopped playback each time the
+token rotated, about every 45 seconds. A longer token or a per-file grant
+like the HTML preview's would also keep late ranges authorized, but would
+widen what a URL in the page can open. A PDF and a font load their bytes when
+they open, so only media asks for ranges late, and the renewal covers it
+without changing any server check. A PDF still downloading when its token
+expires, a very large file over a slow link, is the case this leaves open.
+
+### Why PDFs keep the frame where they can, and pdf.js only where they cannot
+
+A PDF opens in a frame, and the runtime's own viewer draws it, with its zoom,
+search and print. The Android WebView and Android Chrome have no viewer and
+painted an empty frame (#5823). They report `navigator.pdfViewerEnabled ===
+false`, so there, and only there, `PdfArtifact` draws the pages with pdf.js:
+pages at the pane width and the device pixel ratio, scrolled down, each page
+painted while it is within a screen of view and cleared once it leaves, so a
+long document holds a few canvases. pdf.js everywhere would have replaced
+working viewers with a poorer one. It is the legacy build, which carries
+polyfills that WebViews a few versions behind need, and the module and its
+worker are bundled assets imported on first use, never fetched from a CDN, so
+offline use and the VS Code CSP hold and nothing loads until a PDF opens there.
+It reads the file in one GET, because a Range request needs a CORS header the
+server does not allow to the Android app. There is no pinch zoom, and PDFs that
+need pdf.js's CMap, standard font or wasm data (CJK text without embedded
+fonts, JPEG 2000 images) may lose that text or image.
 
 An HTML file's preview is untrusted content. `useHtmlPreviewUrl` asks the
 server for a grant (`POST /api/fs/preview`) and loads the page from

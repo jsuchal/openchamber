@@ -57,12 +57,6 @@ const FALLBACK_MODEL_ID = 'big-pickle';
 const MIN_GOAL_TOKEN_BUDGET = 1_000;
 const MAX_GOAL_TOKEN_BUDGET = 100_000_000;
 
-// OpenCode answers LocationNotFoundError only when a directory does not exist;
-// for a session route that is the session's own folder. Mirrored by
-// `SESSION_DIRECTORY_MISSING_CODE` in packages/ui/src/sync/session-archive-batch.ts
-// and packages/vscode/src/bridge-system-runtime.ts.
-const SESSION_DIRECTORY_MISSING_CODE = 'SESSION_DIRECTORY_MISSING';
-const isLocationNotFound = (error) => error?._tag === 'LocationNotFoundError';
 
 const resolveGoalInput = (payload, prompt) => {
   const enabled = payload?.goal === true;
@@ -312,6 +306,20 @@ const forkSession = async ({ client, sessionID, messageID }) => {
   return session;
 };
 
+/**
+ * The session whose agent sent a prompt, as the prompt's message records it
+ * (`metadata.openchamber.promptedBy`). The title is a fallback for a reader
+ * that cannot see that session; a failed read records the id alone.
+ */
+const readPromptOrigin = async (client, sessionID) => {
+  try {
+    const title = asNonEmptyString((await client.session.get({ sessionID }))?.title);
+    return title ? { sessionID, title } : { sessionID };
+  } catch {
+    return { sessionID };
+  }
+};
+
 const listMessages = async ({ client, sessionID, limit }) => {
   const response = await client.message.list({ sessionID, limit, order: 'desc' });
   return asList(response?.data);
@@ -485,8 +493,6 @@ export const createOpenChamberSessionService = (dependencies) => {
     archiveStore: injectedArchiveStore = null,
     // Archive state on OpenCode; module tests pass a fake.
     openCodeArchive: injectedOpenCodeArchive = null,
-    // A directory OpenCode already runs, for reads that have none of their own.
-    getDefaultOpenCodeDirectory = () => null,
     sessionMetadataStore: injectedSessionMetadataStore = null,
     // Injected by the server so every metadata write takes the same path:
     // store, broadcast, and tell the goal loop. Falls back to store+broadcast
@@ -549,7 +555,7 @@ export const createOpenChamberSessionService = (dependencies) => {
   };
   const sessionArchive = createSessionArchive({
     store: archiveStore,
-    openCode: injectedOpenCodeArchive || createOpenCodeSessionArchive({ clientFor, getDefaultDirectory: getDefaultOpenCodeDirectory }),
+    openCode: injectedOpenCodeArchive || createOpenCodeSessionArchive({ clientFor }),
     announce: broadcastArchived,
   });
 
@@ -711,6 +717,7 @@ export const createOpenChamberSessionService = (dependencies) => {
     requestedAgent,
     requestedVariant,
     reuseSessionSelection = false,
+    promptedBySessionId = null,
   }) => {
     let model = requestedModel;
     let agent = requestedAgent;
@@ -847,7 +854,11 @@ export const createOpenChamberSessionService = (dependencies) => {
     } else {
       let landedMessageID = null;
       try {
-        const sent = await client.session.prompt({ sessionID, text: expandedPrompt });
+        const promptInput = { sessionID, text: expandedPrompt };
+        if (promptedBySessionId) {
+          promptInput.metadata = { openchamber: { promptedBy: await readPromptOrigin(client, promptedBySessionId) } };
+        }
+        const sent = await client.session.prompt(promptInput);
         landedMessageID = asNonEmptyString(sent?.id);
         if (goalInput.enabled) {
           // Goal mode's reminder refers to "the user message above", so it is
@@ -908,18 +919,7 @@ export const createOpenChamberSessionService = (dependencies) => {
       throw new OpenChamberControlError('patch must be an object', 400);
     }
 
-    try {
-      return { metadata: await writeMetadata(id, patch, asNonEmptyString(payload?.directory) || '') };
-    } catch (error) {
-      // OpenCode (2.0.32, 2.1.0) refuses every write to a session whose folder
-      // is gone once that folder is no longer loaded, though the session still
-      // reads. The code lets the UI say so and offer archive, which
-      // OpenChamber keeps and which still works.
-      if (!isLocationNotFound(error)) throw error;
-      throw new OpenChamberControlError(error.message || 'The session folder no longer exists', 409, {
-        code: SESSION_DIRECTORY_MISSING_CODE,
-      });
-    }
+    return { metadata: await writeMetadata(id, patch, asNonEmptyString(payload?.directory) || '') };
   };
 
   const getMetadata = async (sessionID, directory = '') => {
@@ -1090,7 +1090,6 @@ export const createOpenChamberSessionService = (dependencies) => {
       directory: sessionDirectory,
       ...(title ? { title } : {}),
     });
-
     let dispatch = { model, agent, variant, promptDispatched: false, dispatchedAsCommand: false };
     if (prompt) {
       dispatch = await dispatchPrompt({
@@ -1105,6 +1104,7 @@ export const createOpenChamberSessionService = (dependencies) => {
         requestedModel: model,
         requestedAgent: agent,
         requestedVariant: variant,
+        promptedBySessionId: asNonEmptyString(payload.promptedBySessionId),
       });
     }
 
@@ -1146,6 +1146,55 @@ export const createOpenChamberSessionService = (dependencies) => {
     }
 
     return result;
+  };
+
+  /** Archived subsessions under a session, each parent before its children. */
+  const listArchivedSubsessions = async (client, rootID) => {
+    const seen = new Set([rootID]);
+    const seenCursors = new Set();
+    const parents = [rootID];
+    while (parents.length > 0) {
+      const parentID = parents.shift();
+      let cursor;
+      do {
+        const page = await client.session.list(cursor ? { cursor } : { parentID, archived: true });
+        for (const child of page?.data ?? []) {
+          if (!child?.id || !child.time?.archived || seen.has(child.id)) continue;
+          seen.add(child.id);
+          parents.push(child.id);
+        }
+        // A repeated cursor would spin the walk and hold the send open.
+        cursor = page?.data?.length ? page.cursor?.next : undefined;
+        if (cursor && seenCursors.has(cursor)) cursor = undefined;
+        if (cursor) seenCursors.add(cursor);
+      } while (cursor);
+    }
+    seen.delete(rootID);
+    return [...seen];
+  };
+
+  /**
+   * A prompt sent to an archived top-level session brings it back with its
+   * archived subsessions, as a send from the composer does
+   * (`packages/ui/src/sync/user-message-resume.ts`). The prompt is already
+   * accepted, so a failed restore is logged and never fails the send.
+   */
+  const restoreAfterSend = async (client, sessionID) => {
+    try {
+      const session = await client.session.get({ sessionID });
+      if (session?.parentID) return;
+      const archivedAt = await sessionArchive.archivedAt(sessionID);
+      if (!archivedAt) return;
+      // Read before the root changes state, as the composer's tree restore does.
+      const subsessionIDs = await listArchivedSubsessions(client, sessionID);
+      // A newer archive or a restore by someone else supersedes this one.
+      if (await sessionArchive.archivedAt(sessionID) !== archivedAt) return;
+      const { failedIds } = await sessionArchive.unarchive([sessionID]);
+      if (failedIds.length > 0) return;
+      if (subsessionIDs.length > 0) await sessionArchive.unarchive(subsessionIDs);
+    } catch (error) {
+      console.warn(`[openchamber-sessions] could not restore ${sessionID} after a send:`, error?.message ?? error);
+    }
   };
 
   const runExisting = async (action, sourceSessionId, payload = {}) => {
@@ -1220,7 +1269,9 @@ export const createOpenChamberSessionService = (dependencies) => {
         requestedAgent: asNonEmptyString(payload.agent),
         requestedVariant: asNonEmptyString(payload.variant),
         reuseSessionSelection: true,
+        promptedBySessionId: asNonEmptyString(payload.promptedBySessionId),
       });
+      if (action === 'send' && dispatch.promptDispatched) await restoreAfterSend(client, targetSessionID);
       const result = {
         action,
         sessionId: targetSessionID,
@@ -1366,7 +1417,6 @@ const sendServiceError = (res, error, fallback) => {
       directory: controlError.directory,
     } : {}),
   };
-  if (controlError.code === SESSION_DIRECTORY_MISSING_CODE) body.code = controlError.code;
   return res.status(controlError.statusCode).json(body);
 };
 

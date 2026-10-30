@@ -12,6 +12,7 @@ const createService = (overrides = {}) => {
     session: {
       list: vi.fn(async () => ({ data: [] })),
       active: vi.fn(async () => ({})),
+      inbox: { list: vi.fn(async () => []) },
     },
     message: {
       list: vi.fn(async () => ({ data: [] })),
@@ -219,6 +220,38 @@ describe('OpenChamber control service', () => {
     const { service, sessionService } = createService();
     await service.execute('session.create', { title: 'From tool' }, '/repo');
     expect(sessionService.create).toHaveBeenCalledWith({ directory: '/repo', title: 'From tool' });
+  });
+
+  it('names the calling session as the sender of the prompt it dispatches', async () => {
+    const { service, sessionService } = createService();
+    await service.execute('session.create', { title: 'Side task', prompt: 'Go' }, '/repo', { contextSessionId: 'ses_caller' });
+    expect(sessionService.create).toHaveBeenCalledWith({ directory: '/repo', title: 'Side task', prompt: 'Go', promptedBySessionId: 'ses_caller' });
+
+    await service.execute('session.send', { sessionId: 'ses_other', directory: '/repo', prompt: 'Go' }, '/repo', { contextSessionId: 'ses_caller' });
+    expect(sessionService.send).toHaveBeenLastCalledWith('ses_other', { directory: '/repo', prompt: 'Go', promptedBySessionId: 'ses_caller' });
+
+    // A session prompting itself has nothing to link back to.
+    await service.execute('session.send', { sessionId: 'ses_caller', directory: '/repo', prompt: 'Go' }, '/repo', { contextSessionId: 'ses_caller' });
+    expect(sessionService.send).toHaveBeenLastCalledWith('ses_caller', { directory: '/repo', prompt: 'Go' });
+  });
+
+  it('names the calling session\'s task, and says so when the server cannot', async () => {
+    const setWorktreeTaskTitle = vi.fn(async (_directory, { title }) => ({ applied: true, title }));
+    const { service, client } = createService({
+      workNaming: {
+        listWorktrees: async () => [{ path: '/repo' }, { path: '/wt/a' }],
+        setWorktreeTaskTitle,
+        updateMetadata: vi.fn(),
+      },
+    });
+    client.session.get = vi.fn(async () => ({ id: 'ses_caller', title: 'x', location: { directory: '/wt/a' } }));
+    await expect(service.execute('work.name', { title: 'Login fix' }, '/wt/a', { contextSessionId: 'ses_caller' }))
+      .resolves.toEqual({ task: 'worktree', title: 'Login fix', named: true });
+    expect(setWorktreeTaskTitle).toHaveBeenCalledWith('/wt/a', { title: 'Login fix', by: 'agent' });
+
+    const { service: without } = createService();
+    await expect(without.execute('work.name', { title: 'Login fix' }, '/repo', { contextSessionId: 'ses_caller' }))
+      .rejects.toMatchObject({ statusCode: 503 });
   });
 
   it('hands a pull request number to session creation with the folder and branch names it may carry', async () => {
@@ -823,6 +856,42 @@ describe('render.page', () => {
       expect(() => service.answerPage({ sessionId: 'ses_1', callId: 'call_1', ...answer })).toThrow(expect.objectContaining({ statusCode }));
       service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'B' });
       await expect(pending).resolves.toMatchObject({ answer: { summary: 'B' } });
+    });
+
+    it('does not wait when the user wrote in the chat before the page appeared', async () => {
+      const onPageWaitChange = vi.fn();
+      const { service, client } = createService({ onPageWaitChange });
+      client.session.inbox.list.mockResolvedValue([
+        { id: 'msg_2', sessionID: 'ses_1', type: 'user', delivery: 'steer', payload: { text: 'draw it' }, time: { created: 1 } },
+      ]);
+
+      const result = await service.execute('render.page', ask, '/repo', call);
+
+      expect(client.session.inbox.list).toHaveBeenCalledWith({ sessionID: 'ses_1' });
+      expect(result).toMatchObject({ title: 'Pick a layout', answer: { answered: false, reason: 'chat-sent-earlier' } });
+      expect(result.note).toContain('not an answer to it');
+      expect(onPageWaitChange).not.toHaveBeenCalled();
+      expect(() => service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'B' })).toThrow(expect.objectContaining({ statusCode: 404 }));
+    });
+
+    it('waits when only a synthetic or queued message is pending, or the inbox cannot be read', async () => {
+      const { service, client } = createService();
+      client.session.inbox.list.mockResolvedValueOnce([
+        { id: 'msg_2', sessionID: 'ses_1', type: 'synthetic', delivery: 'steer', payload: { text: 'subagent finished' }, time: { created: 1 } },
+        { id: 'msg_3', sessionID: 'ses_1', type: 'user', delivery: 'queue', payload: { text: 'after this turn' }, time: { created: 2 } },
+      ]);
+      const pending = service.execute('render.page', ask, '/repo', call);
+      await settle();
+      service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'B' });
+      await expect(pending).resolves.toMatchObject({ answer: { answered: true, summary: 'B' } });
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      client.session.inbox.list.mockRejectedValueOnce(new Error('OpenCode is down'));
+      const failedRead = service.execute('render.page', ask, '/repo', call);
+      await settle();
+      service.answerPage({ sessionId: 'ses_1', callId: 'call_1', summary: 'A' });
+      await expect(failedRead).resolves.toMatchObject({ answer: { answered: true, summary: 'A' } });
+      warn.mockRestore();
     });
 
     it('refuses to wait without a call id, so an older plugin falls back to asking in text', async () => {

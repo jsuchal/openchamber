@@ -18,12 +18,13 @@ or extending these scripts. The methodology rules they enforce come from
 | `bun run profile:heap` | How much JS heap and DOM the page keeps after hovering and opening N sessions. |
 | `bun run profile:composer` | What each new composer line costs in style recalculation. |
 | `bun run profile:toggle` | What opening and closing the left session sidebar and the right context panel costs, per toggle. |
+| `bun run profile:ios` | What the iOS app does on a real iPhone, over its WebKit inspector: tap to keyboard, per-frame positions through a keyboard open, the heaviest subtrees. Setup in the `performance-engineering` skill, `references/ios-webkit.md`. |
 | `bun run profile:compare` | Whether a change made the scenarios faster or slower: builds the before and the after, measures both the same way, prints one table. |
 | `bun run profile:serve` | An isolated server with the fixture provider, to run the commands above by hand. |
 | `bun run profile:analyze` | Where one run's time went: functions, source files, components, long tasks, renders. |
 | `bun run build:web:diag` | Not a capture: the diagnostic build that names functions and components (Attribution below). |
 
-All of them measure a real browser over CDP. Pass `--help` to any of them for
+All of them measure a real browser over CDP; `profile:ios` measures the phone's WebKit through the `pymobiledevice3` bridge instead, with its commands in the script's header. Pass `--help` to any of them for
 the full option list.
 
 To answer "did my change help", start with `profile:compare` (Comparing Two
@@ -623,6 +624,17 @@ OPENCHAMBER_TEST_CHROME=/path/to/chrome node --test scripts/perf/json-tree-view.
 
 The test reports a skip if Chrome is unavailable. An explicit invalid Chrome path fails. This is layout correctness coverage; measure Files performance in the built app.
 
+## Quote comment popover regression
+
+`chat-quote-popover.browser.test.mjs` renders the real `ChatQuoteMarkPopover` with the UI stylesheet in an isolated Vite fixture that has its own optimizer cache, so it can run next to the JSON tree test. A short saved comment sits on a quote at the left and right edges, at 320, 390 and 1024 px, in both text directions. The test opens the editor and saves twice, and after every step it checks that the popover and its controls stay 12 px inside the viewport. Like the JSON tree test, it stays on loopback and stops what it started.
+
+```bash
+node --test scripts/perf/chat-quote-popover.browser.test.mjs
+OPENCHAMBER_TEST_CHROME=/path/to/chrome node --test scripts/perf/chat-quote-popover.browser.test.mjs
+```
+
+It skips without Chrome and fails on an explicit invalid Chrome path, the same as the JSON tree test.
+
 ## profile:heap
 
 Reads the JS heap, DOM nodes and listeners three times, each after two forced
@@ -1031,20 +1043,7 @@ be a measurement, never a disabled instrument.
 
 ## Methodology Rules
 
-- **Never report an "after" without a "before" on the identical scenario and
-  build.** Rebuild the unchanged version and re-run it, however inconvenient:
-  `profile:compare` does exactly that. Expect plausible fixes to change nothing.
-- **A sampling profiler cannot explain native work.** Self time in `(program)`
-  only means the time was not in interpreted JavaScript. Use the trace
-  breakdown, which names parsing, style, layout, layerization, paint and raster.
-- **Normalise when the workload varies.** Assistant responses differ in length
-  between runs, so per-second totals are not comparable; `profile:session`
-  reports output-normalised metrics for this reason.
-- **Revert what you cannot measure.** A change that does not move its target
-  metric is unvalidated complexity, not a small win.
-- **Reproduction may need production scale you do not have.** A threshold effect
-  is invisible below its threshold. Compare the reporter's scale against yours
-  on the dimension the code keys on before concluding a bug is absent.
+The measurement rules are in `.agents/skills/performance-engineering/SKILL.md`, *Workflow* steps 0 and 1. This tooling encodes two of them: `profile:compare` reruns the unchanged build for every before/after, and `profile:session` reports output-normalised metrics because response lengths vary between runs.
 
 ## Module Layout
 

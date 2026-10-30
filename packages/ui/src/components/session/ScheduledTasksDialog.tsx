@@ -217,7 +217,7 @@ const LoopApprovalMark: React.FC<{ reason: NonNullable<ScheduledTask['loopApprov
     ? t('sessions.scheduledTasks.dialog.loopFile.changedSinceEnabled')
     : t('sessions.scheduledTasks.dialog.loopFile.enableOnThisComputer');
   return (
-    <span role="img" aria-label={label} title={label} className="inline-flex text-muted-foreground/70">
+    <span role="img" aria-label={label} title={label} className="inline-flex text-muted-foreground">
       <Icon name={reason === 'outdated' ? 'file-edit' : 'git-branch'} className="h-3.5 w-3.5" />
     </span>
   );
@@ -290,7 +290,7 @@ export function ScheduledTasksView({ layout, onLeave }: {
     const fallbackIcon = projectIconName ? (
       <Icon name={projectIconName} className="h-3.5 w-3.5 shrink-0" style={iconColor ? { color: iconColor } : undefined} />
     ) : (
-      <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80"  style={iconColor ? { color: iconColor } : undefined}/>
+      <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-muted-foreground"  style={iconColor ? { color: iconColor } : undefined}/>
     );
 
     return (
@@ -570,7 +570,7 @@ export function ScheduledTasksView({ layout, onLeave }: {
 
   const chatsLabel = (
     <span className="inline-flex min-w-0 items-center gap-1.5">
-      <Icon name="chat-4" className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" />
+      <Icon name="chat-4" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span className="truncate">{t('sessions.scheduledTasks.dialog.project.chats')}</span>
     </span>
   );
@@ -691,13 +691,13 @@ export function ScheduledTasksView({ layout, onLeave }: {
                   <div className="typography-micro truncate text-muted-foreground">
                     {formatSchedule(task, t)}
                   </div>
-                  <div className="typography-micro flex min-w-0 items-center gap-1 text-muted-foreground/70" title={task.execution.useDefaults ? undefined : `${task.execution.providerID ?? ''}/${task.execution.modelID ?? ''}`}>
+                  <div className="typography-micro flex min-w-0 items-center gap-1 text-muted-foreground" title={task.execution.useDefaults ? undefined : `${task.execution.providerID ?? ''}/${task.execution.modelID ?? ''}`}>
                     <TaskModelLine task={task} />
                   </div>
                   {task.targetSessionId ? <TaskTargetLine sessionId={task.targetSessionId} /> : null}
                   {task.loopFile ? (
                     <div
-                      className="typography-micro truncate text-muted-foreground/70"
+                      className="typography-micro truncate text-muted-foreground"
                       title={task.loopFile}
                     >
                       {t('sessions.scheduledTasks.dialog.loopFile.note', { file: task.loopFile })}
@@ -845,7 +845,7 @@ export function ScheduledTasksView({ layout, onLeave }: {
             {tasksList}
           </div>
           <div
-            className="shrink-0 border-t border-border/70 px-4 pt-2"
+            className="shrink-0 border-t border-edge px-4 pt-2"
             style={{ paddingBottom: 'calc(0.5rem + var(--oc-safe-area-bottom, 0px))' }}
           >
             {newTaskButton('w-full')}
@@ -858,7 +858,7 @@ export function ScheduledTasksView({ layout, onLeave }: {
         // so the page itself only carries the close affordance.
         <div className="absolute inset-0 z-10 flex flex-col bg-background">
           <div className="flex min-h-0 flex-1">
-            <div className="flex w-60 flex-shrink-0 flex-col border-e border-border/50">
+            <div className="flex w-60 flex-shrink-0 flex-col border-e border-edge">
               <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
                 {!hasScopes ? (
                   <div className="px-2 py-2 typography-meta text-muted-foreground">

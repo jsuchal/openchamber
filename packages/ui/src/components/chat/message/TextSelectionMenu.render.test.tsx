@@ -7,6 +7,7 @@ import type { Session } from '@/lib/opencode/model';
 import { I18nProvider } from '@/lib/i18n';
 import { SyncProvider } from '@/sync/sync-context';
 import { getSyncChildStores } from '@/sync/sync-refs';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 import { ChatColumnSessionContext } from '../chatColumnSession';
 import { dispatchFrameSelection } from './frameSelection';
 
@@ -135,6 +136,29 @@ describe('TextSelectionMenu render subscriptions', () => {
     containerRef.current = null;
   });
 
+  test('opening a new-session draft over the chat closes the menu', async () => {
+    const host = document.createElement('div');
+    const frame = document.createElement('iframe');
+    host.appendChild(frame);
+    document.body.appendChild(host);
+    containerRef.current = host;
+    const draftBefore = useSessionUIStore.getState().newSessionDraft;
+    await render(true);
+    try {
+      await act(async () => {
+        dispatchFrameSelection(frame, { text: 'picked words', rect: { top: 10, left: 20, width: 80, height: 16 } });
+      });
+      expect(document.body.textContent).toContain('Comment');
+
+      // The chat stays mounted behind the draft, and nothing fires a selectionchange.
+      await act(async () => useSessionUIStore.setState({ newSessionDraft: { ...draftBefore, open: true } }));
+      expect(document.body.textContent).not.toContain('Comment');
+    } finally {
+      useSessionUIStore.setState({ newSessionDraft: draftBefore });
+      containerRef.current = null;
+    }
+  });
+
   test('a frame outside the menu\'s message does not open it', async () => {
     const host = document.createElement('div');
     const otherFrame = document.createElement('iframe');
@@ -227,6 +251,41 @@ describe('TextSelectionMenu render subscriptions', () => {
       dispatchFrameSelection(frame, { text: 'picked words', rect: { top: 1, left: 1, width: 5, height: 5 } });
     });
 
+    expect(document.body.textContent).not.toContain('Comment');
+    containerRef.current = null;
+  });
+
+  test('closes when its session is hidden, and stays closed when the session is shown again', async () => {
+    const host = document.createElement('div');
+    const frame = document.createElement('iframe');
+    host.appendChild(frame);
+    document.body.appendChild(host);
+    containerRef.current = host;
+    // KeepAlive keeps a session the user switched away from in a hidden Activity.
+    const renderIn = (mode: 'visible' | 'hidden') => act(async () => root.render(
+      <SyncProvider sdk={sdk} directory={directory}>
+        <I18nProvider>
+          <ChatColumnSessionContext.Provider value={column}>
+            <React.Activity mode={mode}>
+              <TextSelectionMenu containerRef={containerRef} readingKey="message-1" canReadAloud={false} frameSelections />
+            </React.Activity>
+          </ChatColumnSessionContext.Provider>
+        </I18nProvider>
+      </SyncProvider>,
+    ));
+    await renderIn('visible');
+    await act(async () => {
+      dispatchFrameSelection(frame, { text: 'picked words', rect: { top: 1, left: 1, width: 5, height: 5 } });
+    });
+    expect(document.body.textContent).toContain('Comment');
+
+    // The menu's own state, not what is painted: the app showed the portal
+    // over the next session while this test DOM keeps it either way.
+    await renderIn('hidden');
+    expect(document.body.textContent).not.toContain('Comment');
+
+    // Shown again, a menu left open would have lost its Escape and outside-press handling.
+    await renderIn('visible');
     expect(document.body.textContent).not.toContain('Comment');
     containerRef.current = null;
   });

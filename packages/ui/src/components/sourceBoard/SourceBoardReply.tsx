@@ -19,7 +19,7 @@ import { SourceBoardVotes } from './SourceBoardVotes';
 type Busy = 'comment' | 'thread' | 'vote' | ReviewVerdict | null;
 
 /**
- * Below an issue's or pull request's activity: write a comment, or on an
+ * Below an issue's, discussion's or pull request's activity: write a comment, or on an
  * open pull request review it with the text as the review's body. A verdict
  * host approves or requests changes; a votes host votes on the labels the
  * change names (`SourceBoardVotes`), and only on its latest revision. The
@@ -68,6 +68,7 @@ export const SourceBoardReply: React.FC<{
         try {
             const payload = { ...context, idempotencyKey: newMutationKey(), target: { project, number: reference.number }, body };
             if (reference.kind === 'pull') await sourceControl.changeRequestComment(payload);
+            else if (reference.kind === 'discussion') await sourceControl.discussionComment(payload);
             else await sourceControl.issueComment(payload);
             setText('');
             toast.success(t('sourceBoard.reply.toast.commented', { reference: label }));
@@ -166,7 +167,7 @@ export const SourceBoardReply: React.FC<{
     const busyIcon = (kind: Busy) => (busy === kind ? <Icon name="loader-4" className="size-3.5 animate-spin" /> : null);
 
     return (
-        <section className="flex flex-col gap-2 border-t border-border/60 pt-4" aria-label={t('sourceBoard.reply.label')}>
+        <section className="flex flex-col gap-2 border-t border-edge pt-4" aria-label={t('sourceBoard.reply.label')}>
             <Textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}

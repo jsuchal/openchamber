@@ -920,7 +920,7 @@ export function DesktopHostSwitcherDialog({
       )}
 
         {!desktopAvailable && (
-          <div className="flex-shrink-0 rounded-lg border border-border/50 bg-muted/20 p-3">
+          <div className="flex-shrink-0 rounded-lg border border-edge bg-muted/20 p-3">
             <div className="typography-meta text-muted-foreground">
               {t('desktopHostSwitcher.state.limitedOnPage')}
             </div>
@@ -992,7 +992,7 @@ export function DesktopHostSwitcherDialog({
                             {displayLabel}
                           </span>
                           {isActive && (
-                            <span className="typography-micro flex-shrink-0 text-muted-foreground bg-muted px-1 rounded leading-none pb-px border border-border/50">
+                            <span className="typography-micro flex-shrink-0 text-muted-foreground bg-muted px-1 rounded leading-none pb-px border border-edge">
                               {t('desktopHostSwitcher.header.current')}
                             </span>
                           )}
@@ -1009,7 +1009,7 @@ export function DesktopHostSwitcherDialog({
                             : ''}
                           {!isSsh && status?.via === 'relay' ? ` · ${t('settings.remoteInstances.clientAuth.state.viaRelay')}` : ''}
                         </div>
-                        <div className="typography-micro text-muted-foreground/70 truncate font-mono">
+                        <div className="typography-micro text-muted-foreground truncate font-mono">
                           {displayUrl}
                         </div>
                       </div>
@@ -1048,7 +1048,7 @@ export function DesktopHostSwitcherDialog({
                               'h-8 w-8 rounded-md inline-flex items-center justify-center hover:bg-interactive-hover transition-colors',
                               isDefault
                                 ? 'text-primary hover:text-primary/80'
-                                : 'text-muted-foreground/60 hover:text-primary/80',
+                                : 'text-muted-foreground hover:text-primary/80',
                             )}
                             onClick={() => void setDefault(host.id)}
                             aria-label={isDefault ? t('desktopHostSwitcher.actions.defaultInstanceAria') : t('desktopHostSwitcher.actions.setAsDefaultAria')}
@@ -1070,7 +1070,7 @@ export function DesktopHostSwitcherDialog({
                                 'h-8 w-8 rounded-md inline-flex items-center justify-center hover:bg-interactive-hover transition-colors',
                                 isBlockedDisplayStatus(statusKind)
                                   ? 'text-muted-foreground/30 cursor-not-allowed'
-                                  : 'text-muted-foreground/60 hover:text-foreground',
+                                  : 'text-muted-foreground hover:text-foreground',
                               )}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1097,7 +1097,7 @@ export function DesktopHostSwitcherDialog({
         </div>
 
         {desktopAvailable && editingId && editingId !== LOCAL_HOST_ID && (
-          <div className="flex-shrink-0 rounded-lg border border-border/50 bg-muted/20 p-3">
+          <div className="flex-shrink-0 rounded-lg border border-edge bg-muted/20 p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="typography-ui-label font-medium text-foreground">{t('desktopHostSwitcher.edit.title')}</div>
               <div className="flex items-center gap-2">

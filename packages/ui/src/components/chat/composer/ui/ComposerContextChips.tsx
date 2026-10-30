@@ -42,6 +42,8 @@ import { getContextPreviewMaxHeight } from './contextPreviewHeight';
 import { withAttachmentChips } from '../../message/parts/attachmentCitationChips';
 import { useInputStore } from '@/sync/input-store';
 import { GlassPopupMotion } from './GlassPopupMotion';
+import { fileWithDiffCommentOrigin } from '@/lib/diffCommentOrigin';
+import { isWholeFileComment } from '@/components/comments/wholeFileComment';
 
 interface ComposerContextChipsProps {
     draftTarget: InlineCommentDraftTarget | null;
@@ -332,10 +334,13 @@ function ComposerContextChipsView({ draftTarget, colors, previewHost }: Composer
                         ? t('chat.message.context.codeCommentLine', { file: basename(draft.fileLabel), line: draft.startLine })
                         : t('chat.message.context.codeComment', { file: basename(draft.fileLabel), start: draft.startLine, end: draft.endLine }))
                     : t('chat.message.context.fileQuote', { file: basename(draft.fileLabel) });
-            default:
+            default: {
+                const file = fileWithDiffCommentOrigin(basename(draft.fileLabel), draft.origin);
+                if (isWholeFileComment(draft)) return t('chat.message.context.codeCommentFile', { file });
                 return draft.startLine === draft.endLine
-                    ? t('chat.message.context.codeCommentLine', { file: basename(draft.fileLabel), line: draft.startLine })
-                    : t('chat.message.context.codeComment', { file: basename(draft.fileLabel), start: draft.startLine, end: draft.endLine });
+                    ? t('chat.message.context.codeCommentLine', { file, line: draft.startLine })
+                    : t('chat.message.context.codeComment', { file, start: draft.startLine, end: draft.endLine });
+            }
         }
     }, [t, termOf]);
 
@@ -478,7 +483,7 @@ function ComposerContextChipsView({ draftTarget, colors, previewHost }: Composer
                     // Same chip shape as attached files and linked
                     // references; the inline minimums opt out of the
                     // mobile 36px button floor so the row stays even.
-                    className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2 text-start text-xs transition-opacity hover:opacity-80"
+                    className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-lg border border-edge bg-background px-2 text-start text-xs transition-opacity hover:opacity-80"
                     style={{ minHeight: 0, minWidth: 0 }}
                     onMouseEnter={() => {
                         cancelClose();

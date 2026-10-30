@@ -404,7 +404,9 @@ describe('managed agent tool runtime', () => {
     expect(Object.keys(tool.openchamber_web.input.properties.parameters.properties)).toContain('url');
     expect(Object.keys(tool.openchamber_web.input.properties.parameters.properties)).toContain('label');
     expect(Object.keys(tool.openchamber_web.input.properties.parameters.properties)).toContain('value');
-    expect(Object.keys(tool.openchamber.input.properties.parameters.properties)).not.toContain('url');
+    expect(Object.keys(tool.openchamber.input.properties.parameters.properties)).not.toContain('selector');
+    // The control tool's own `url` names the pull request pr.watch follows, not a page.
+    expect(tool.openchamber.input.properties.parameters.properties.url.description).toContain('pr.watch');
     expect(Object.keys(tool.openchamber.input.properties.parameters.properties)).toContain('sessionId');
     expect(Object.keys(tool.openchamber.input.properties.parameters.properties)).toContain('path');
     expect(Object.keys(tool.openchamber_web.input.properties.parameters.properties)).not.toContain('path');
@@ -481,6 +483,27 @@ describe('managed agent tool runtime', () => {
     // v2 tools get no directory; the session id is what OpenChamber resolves from.
     expect(sent[2].sessionID).toBe('ses_1');
     expect(sent[2].contextDirectory).toBeUndefined();
+  });
+
+  it('declares the workflow tool only when asked, with the scripting guide on script', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    await prepareManagedEnv(runtime, { includeControl: true, includeWorkflow: true });
+    const tools = await loadTools(dataDir, 'workflow-tool');
+
+    expect(tools.openchamber_workflow.input.properties.action.oneOf.map((entry) => entry.const)).toEqual([
+      'workflow.check', 'workflow.run', 'workflow.status', 'workflow.result', 'workflow.stop', 'workflow.resume', 'workflow.save', 'workflow.list',
+    ]);
+    const parameters = tools.openchamber_workflow.input.properties.parameters.properties;
+    expect(parameters.script.description).toContain('agent(prompt, { label, phase, agent, model, schema })');
+    expect(Object.keys(parameters)).toEqual(['script', 'name', 'args', 'runId', 'agent', 'overwrite']);
+    // The answer tool comes along, direct; the managed config denies it outside workflow agents.
+    expect(tools.openchamber_workflow_answer.options).toEqual({ codemode: false });
+    expect(Object.keys(tools.openchamber_workflow_answer.input.properties.parameters.properties)).toEqual(['answer']);
+
+    await prepareManagedEnv(runtime, { includeControl: true });
+    const off = await loadTools(dataDir, 'workflow-tool-off');
+    expect(off.openchamber_workflow).toBeUndefined();
+    expect(off.openchamber_workflow_answer).toBeUndefined();
   });
 
   it('runs the one action of a single-action tool, reviving a call stuffed into the action as JSON', async () => {
@@ -632,6 +655,18 @@ describe('managed agent tool runtime', () => {
     expect(Object.keys(await loadTools(plainDir, 'nonotify'))).toEqual(['openchamber']);
   });
 
+  it('exposes image generation as its own tool only when switched on, never behind Code Mode', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    await prepareManagedEnv(runtime, { includeControl: true, includeWeb: false, includeMemory: false, includeImage: true, codeMode: true });
+    const tool = await loadTools(dataDir, 'image');
+
+    expect(Object.keys(tool)).toEqual(['openchamber', 'openchamber_image']);
+    expect(Object.keys(tool.openchamber_image.input.properties.parameters.properties).sort())
+      .toEqual(['aspect', 'count', 'images', 'path', 'prompt', 'resolution']);
+    expect(tool.openchamber_image.options).toEqual({ codemode: false });
+    expect(tool.openchamber_image.description.length).toBeLessThanOrEqual(2048);
+  });
+
   it('exposes render as its own tool carrying only the page and its title', async () => {
     const { runtime, dataDir } = await createRuntime();
     await prepareManagedEnv(runtime, { includeControl: true, includeWeb: false, includeMemory: false, includeRender: true });
@@ -642,7 +677,25 @@ describe('managed agent tool runtime', () => {
     expect(Object.keys(tool.openchamber.input.properties.parameters.properties)).not.toContain('html');
     // How to write the page rides on its input, which no client cuts short.
     expect(tool.openchamber_render.input.properties.parameters.properties.html.description).toContain('--chart-1');
+    expect(tool.openchamber_render.input.properties.parameters.properties.html.description)
+      .toContain('do not build paths from directory and filename fragments');
+    expect(tool.openchamber_render.input.properties.parameters.properties.html.description)
+      .toContain("image.src = images[key]");
     expect(tool.openchamber_render.description).toContain('add no outer card, border or banner title');
+  });
+
+  it('exposes secret as its own direct tool whose every call waits for the user', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    await prepareManagedEnv(runtime, { includeControl: false, includeWeb: false, includeMemory: false, includeSecret: true, codeMode: true });
+    const hooks = {};
+    const tools = await loadTools(dataDir, 'secret', hooks);
+
+    expect(Object.keys(tools)).toEqual(['openchamber_secret']);
+    expect(Object.keys(tools.openchamber_secret.input.properties.parameters.properties).sort()).toEqual(['label', 'placeholder', 'reason']);
+    expect(tools.openchamber_secret.options).toEqual({ codemode: false });
+    expect(tools.openchamber_secret.description.length).toBeLessThanOrEqual(2048);
+    // A chat message ends the wait, like a page's.
+    expect(hooks.prompt).toBeInstanceOf(Function);
   });
 
   it('takes away the OpenCode tools the control tool replaces, and only while it is on', async () => {

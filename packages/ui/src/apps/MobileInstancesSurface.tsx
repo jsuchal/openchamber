@@ -14,6 +14,9 @@ import { isQrScanSupported, scanConnectionQr } from './mobileQrScan';
 import { mobileConnectionInputClass, mobileInputKeyboardProps } from './mobileConnectionUi';
 import { MobileQrConnectionLoading, MobileQrScannerOverlay } from './MobileQrScannerOverlay';
 
+const isRelayOnlyConnection = (connection: { candidates: ReadonlyArray<{ kind: string }> }): boolean =>
+  !connection.candidates.some((c) => c.kind === 'direct');
+
 export const MobileInstancesSurface: React.FC<{
   onConnect: () => void;
   onActiveConnectionDeleted: () => void;
@@ -26,6 +29,8 @@ export const MobileInstancesSurface: React.FC<{
   } = conn;
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const editingConnection = editingId ? connections.find((connection) => connection.id === editingId) ?? null : null;
+  // A relay-only connection has no address or typed token to edit; only its name.
+  const editingRelayOnly = editingConnection ? isRelayOnlyConnection(editingConnection) : false;
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
   const [url, setUrl] = React.useState('');
   const [label, setLabel] = React.useState('');
@@ -159,7 +164,7 @@ export const MobileInstancesSurface: React.FC<{
       <div className="flex h-full flex-col overflow-hidden">
         <form className="flex-1 overflow-y-auto px-5 py-4" onSubmit={handlePasswordSubmit}>
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-3 rounded-[18px] border border-border/70 bg-surface-elevated px-3.5 py-3">
+            <div className="flex items-center gap-3 rounded-[18px] border border-edge bg-surface-elevated px-3.5 py-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-interactive-hover text-foreground">
                 <Icon name="lock" className="size-[18px]" />
               </span>
@@ -202,7 +207,7 @@ export const MobileInstancesSurface: React.FC<{
       <div className="flex-1 overflow-y-auto px-5 py-4">
         <div className="space-y-6">
           {connections.length > 0 ? (
-            <div {...debugLongPress} className="overflow-hidden rounded-[18px] border border-border/70 bg-surface-elevated">
+            <div {...debugLongPress} className="overflow-hidden rounded-[18px] border border-edge bg-surface-elevated">
               {connections.map((connection) => {
                 const confirming = confirmingDeleteId === connection.id;
                 const isActive = isActiveRuntimeConnection(connection);
@@ -213,12 +218,12 @@ export const MobileInstancesSurface: React.FC<{
                   ? t('mobile.connect.connecting')
                   : isActive
                     ? (isRelayModeActive() ? t('mobile.instances.status.connectedRelay') : t('mobile.instances.status.connectedDirect'))
-                    : connection.candidates.some((c) => c.kind === 'direct') ? connectionDisplayUrl(connection) : t('mobile.connect.relay.badge');
+                    : isRelayOnlyConnection(connection) ? t('mobile.connect.relay.badge') : connectionDisplayUrl(connection);
                 return (
                   <div
                     key={connection.id}
                     className={cn(
-                      'flex items-center border-b border-border/70 transition-colors last:border-b-0',
+                      'flex items-center border-b border-edge transition-colors last:border-b-0',
                       confirming && 'bg-[color-mix(in_srgb,var(--destructive)_8%,transparent)]',
                     )}
                   >
@@ -262,14 +267,14 @@ export const MobileInstancesSurface: React.FC<{
                           <Icon name="delete-bin" className="size-[18px]" />
                           <span className="typography-ui-label">{t('mobile.instances.delete')}</span>
                         </button>
-                      ) : !connection.candidates.some((c) => c.kind === 'direct') ? null : (
+                      ) : (
                         <button
                           type="button"
                           aria-label={t('mobile.instances.edit')}
                           className="flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors active:bg-interactive-active focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           onClick={() => {
                             setEditingId(connection.id);
-                            setUrl(connectionDisplayUrl(connection));
+                            setUrl(isRelayOnlyConnection(connection) ? '' : connectionDisplayUrl(connection));
                             setLabel(connection.label);
                             setClientToken(connection.clientToken || '');
                             setError(null);
@@ -296,7 +301,7 @@ export const MobileInstancesSurface: React.FC<{
               })}
             </div>
           ) : (
-            <p {...debugLongPress} className="rounded-[18px] border border-dashed border-border/70 px-4 py-6 text-center typography-small text-muted-foreground">
+            <p {...debugLongPress} className="rounded-[18px] border border-dashed border-edge px-4 py-6 text-center typography-small text-muted-foreground">
               {t('mobile.connect.saved.empty')}
             </p>
           )}
@@ -339,6 +344,7 @@ export const MobileInstancesSurface: React.FC<{
                   {t('mobile.instances.cancelEdit')}
                 </Button>
               </div>
+              {editingRelayOnly ? null : (
               <label className="block space-y-1.5">
                 <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.url.label')}</span>
                 <input
@@ -352,6 +358,7 @@ export const MobileInstancesSurface: React.FC<{
                   className={inputClass}
                 />
               </label>
+              )}
               <label className="block space-y-1.5">
                 <span className="block px-1 typography-ui-label text-foreground">{t('mobile.instances.label.label')}</span>
                 <input
@@ -365,6 +372,7 @@ export const MobileInstancesSurface: React.FC<{
                   className={inputClass}
                 />
               </label>
+              {editingRelayOnly ? null : (
               <label className="block space-y-1.5">
                 <span className="block px-1 typography-ui-label text-foreground">{t('mobile.connect.token.label')}</span>
                 <input
@@ -377,6 +385,7 @@ export const MobileInstancesSurface: React.FC<{
                 />
                 <p className="px-1 typography-micro text-muted-foreground">{t('mobile.connect.token.hint')}</p>
               </label>
+              )}
               {error ? <p className="px-1 typography-small text-[var(--status-error)]">{error}</p> : null}
               <Button type="submit" size="lg" className="mt-1 h-12 w-full">
                 {editingConnection ? t('mobile.instances.saveEdit') : t('mobile.instances.saveNew')}

@@ -16,6 +16,7 @@ import { useScopedBlockingForms, useSessions } from '@/sync/sync-context';
 import { useRequestReveal } from '@/sync/request-reveal';
 import { useChatSessionSelection } from './chatColumnSession';
 import * as sessionActions from '@/sync/session-actions';
+import { isFormRequestNotFoundError } from '@/sync/form-request-error';
 import { useMobileAutocompleteMaxHeight } from './useMobileAutocompleteMaxHeight';
 import { FormFieldControl } from './FormFieldControl';
 import { WebSearchConsentDock } from './WebSearchConsent';
@@ -119,6 +120,7 @@ const FormDockPanel: React.FC<{ form: FormRequest; forms: FormRequest[] }> = ({ 
     const [step, setStep] = React.useState(restored?.step ?? 0);
     const [collapsed, setCollapsed] = React.useState(false);
     const [isResponding, setIsResponding] = React.useState(false);
+    const respondingRef = React.useRef(false);
     const [showErrors, setShowErrors] = React.useState(false);
     const waiting = forms.length - 1;
     // "Open session" on a question's toast expands the dock, including for a
@@ -161,6 +163,14 @@ const FormDockPanel: React.FC<{ form: FormRequest; forms: FormRequest[] }> = ({ 
 
     const availableMaxHeight = useMobileAutocompleteMaxHeight(bodyRef, !collapsed, 320);
 
+    // The phone's keyboard rises after the answer box takes focus and shrinks
+    // the body under it, which leaves the box below the part still shown.
+    React.useLayoutEffect(() => {
+        const focused = document.activeElement;
+        if (!focused || !bodyRef.current?.contains(focused)) return;
+        focused.scrollIntoView({ block: 'nearest' });
+    }, [availableMaxHeight]);
+
     const updateValue = React.useCallback((key: string, patch: Partial<FormValues[string]>) => {
         setValues((previous) => ({ ...previous, [key]: { ...valueOf(previous, key), ...patch } }));
     }, []);
@@ -180,6 +190,7 @@ const FormDockPanel: React.FC<{ form: FormRequest; forms: FormRequest[] }> = ({ 
     }, [currentFieldIsExternal, currentFieldKey]);
 
     const handleSubmit = React.useCallback(async () => {
+        if (respondingRef.current) return;
         if (!canSubmit) {
             // Jump to the first question that still needs an answer.
             setShowErrors(true);
@@ -187,25 +198,39 @@ const FormDockPanel: React.FC<{ form: FormRequest; forms: FormRequest[] }> = ({ 
             if (firstMissing >= 0) setStep(firstMissing);
             return;
         }
+        respondingRef.current = true;
         setIsResponding(true);
         try {
             await sessionActions.replyToForm(form.sessionID, form.id, buildFormAnswer(fields, values));
             formDrafts.delete(form.id);
-        } catch {
+        } catch (error) {
+            // The store removes not-found requests, so no form remains to retry.
+            if (isFormRequestNotFoundError(error)) {
+                formDrafts.delete(form.id);
+                return;
+            }
             toast.error(t('chat.formCard.submitFailed'), { description: t('chat.formCard.tryAgain') });
         } finally {
+            respondingRef.current = false;
             setIsResponding(false);
         }
     }, [canSubmit, fields, form.id, form.sessionID, missing, shown, t, values]);
 
     const handleDismiss = React.useCallback(async () => {
+        if (respondingRef.current) return;
+        respondingRef.current = true;
         setIsResponding(true);
         try {
             await sessionActions.cancelForm(form.sessionID, form.id);
             formDrafts.delete(form.id);
-        } catch {
+        } catch (error) {
+            if (isFormRequestNotFoundError(error)) {
+                formDrafts.delete(form.id);
+                return;
+            }
             toast.error(t('chat.formCard.cancelFailed'), { description: t('chat.formCard.tryAgain') });
         } finally {
+            respondingRef.current = false;
             setIsResponding(false);
         }
     }, [form.id, form.sessionID, t]);
@@ -250,7 +275,7 @@ const FormDockPanel: React.FC<{ form: FormRequest; forms: FormRequest[] }> = ({ 
 
     const title = form.title?.trim() || t('chat.formCard.inputNeeded');
     const stepLabel = (field: FormField, index: number) => field.title?.trim() || t('chat.questionCard.questionFallback', { index: String(index + 1) });
-    const iconButtonClass = 'rounded p-1 text-muted-foreground/70 transition-colors hover:bg-interactive-hover/30 hover:text-foreground';
+    const iconButtonClass = 'rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/30 hover:text-foreground';
 
     return (
         <ComposerFloatingPanel

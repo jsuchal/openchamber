@@ -25,6 +25,7 @@ const sessionCreateMock = vi.fn(async () => ({ id: 'ses_123' }));
 const sessionForkMock = vi.fn(async () => ({ id: 'ses_fork', title: 'Forked session' }));
 const sessionMessagesMock = vi.fn(async () => ({ data: [] }));
 const sessionGetMock = vi.fn(async ({ sessionID }) => ({ id: sessionID, location: { directory: '/repo/app' } }));
+const sessionListMock = vi.fn(async () => ({ data: [] }));
 const sessionUpdateMock = vi.fn(async () => undefined);
 const sessionMoveMock = vi.fn(async () => undefined);
 const sessionPromptMock = vi.fn(async () => ({ id: 'msg_dispatched' }));
@@ -100,6 +101,7 @@ vi.mock('@opencode/client', () => ({
           create: sessionCreateMock,
           fork: sessionForkMock,
           get: sessionGetMock,
+          list: sessionListMock,
           update: sessionUpdateMock,
           move: sessionMoveMock,
           command: sessionCommandMock,
@@ -183,32 +185,11 @@ const createMemoryArchiveStore = () => {
     failIds: (ids) => { failFor = new Set(ids); },
     entries,
     getAll: async () => Object.fromEntries(entries),
-    list: async () => Object.fromEntries(entries),
     entry: async (id) => entries.get(id),
     forget: async (ids) => {
-      for (const id of ids) entries.delete(id);
-      return { failedIds: [] };
-    },
-    archive: async (ids, archivedAt) => {
-      const stamp = Number.isSafeInteger(archivedAt) && archivedAt > 0 ? archivedAt : 1;
-      const archived = [];
-      const failedIds = [];
-      for (const id of ids) {
-        if (failFor.has(id)) { failedIds.push(id); continue; }
-        entries.set(id, stamp);
-        archived.push({ id, archivedAt: stamp });
-      }
-      return { archived, failedIds };
-    },
-    unarchive: async (ids) => {
-      const restored = [];
-      const failedIds = [];
-      for (const id of ids) {
-        if (failFor.has(id)) { failedIds.push(id); continue; }
-        entries.set(id, null);
-        restored.push({ id, archivedAt: null });
-      }
-      return { restored, failedIds };
+      const failedIds = ids.filter((id) => failFor.has(id) && entries.has(id));
+      for (const id of ids) if (!failedIds.includes(id)) entries.delete(id);
+      return { failedIds };
     },
   };
 };
@@ -272,6 +253,8 @@ describe('openchamber session routes', () => {
     commandListMock.mockResolvedValue({ data: [] });
     sessionGetMock.mockReset();
     sessionGetMock.mockImplementation(async ({ sessionID }) => ({ id: sessionID, location: { directory: '/repo/app' } }));
+    sessionListMock.mockReset();
+    sessionListMock.mockImplementation(async () => ({ data: [] }));
     sessionPromptMock.mockReset();
     sessionPromptMock.mockImplementation(async () => ({ id: 'msg_dispatched' }));
     sessionSyntheticMock.mockReset();
@@ -308,29 +291,29 @@ describe('openchamber session routes', () => {
       expect(broadcastGlobalUiEvent).not.toHaveBeenCalled();
     });
 
-    it('keeps a session whose directory is gone in the archive file, and reports one OpenCode refused', async () => {
+    it('reports a session OpenCode refused or does not know as failed', async () => {
       sessionUpdateMock.mockImplementation(async ({ sessionID }) => {
-        if (sessionID === 'ses_gone') throw tagged('LocationNotFoundError');
+        if (sessionID === 'ses_down') throw tagged('UnknownError');
         if (sessionID === 'ses_missing') throw tagged('SessionNotFoundError');
       });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { app, archiveStore, broadcastGlobalUiEvent } = createApp();
 
       const response = await request(app)
         .post('/api/openchamber/sessions/archive')
-        .send({ ids: ['ses_a', 'ses_gone', 'ses_missing'], archivedAt: 1700 })
+        .send({ ids: ['ses_a', 'ses_down', 'ses_missing'], archivedAt: 1700 })
         .expect(200);
 
-      expect(response.body.archived.map((session) => session.id)).toEqual(['ses_a', 'ses_gone']);
-      expect(response.body.failedIds).toEqual(['ses_missing']);
-      await expect(archiveStore.getAll()).resolves.toEqual({ ses_gone: 1700 });
-      expect(broadcastGlobalUiEvent.mock.calls.map(([event]) => event)).toEqual([
-        { type: 'openchamber:session-archived', properties: { sessionID: 'ses_gone', archivedAt: 1700 } },
-      ]);
+      expect(response.body.archived.map((session) => session.id)).toEqual(['ses_a']);
+      expect(response.body.failedIds).toEqual(['ses_down', 'ses_missing']);
+      await expect(archiveStore.getAll()).resolves.toEqual({});
+      expect(broadcastGlobalUiEvent).not.toHaveBeenCalled();
     });
 
-    it('does not announce a session the file failed to store', async () => {
-      sessionUpdateMock.mockRejectedValue(tagged('LocationNotFoundError'));
+    it('does not announce a session whose old entry the file failed to drop', async () => {
       const archiveStore = createMemoryArchiveStore();
+      archiveStore.entries.set('ses_a', null);
+      archiveStore.entries.set('ses_b', null);
       archiveStore.failIds(['ses_b']);
       const { app, broadcastGlobalUiEvent } = createApp({ archiveStore });
 
@@ -460,23 +443,7 @@ describe('openchamber session routes', () => {
         .resolves.toMatchObject({ body: { metadata: {} } });
     });
 
-    it('answers SESSION_DIRECTORY_MISSING when OpenCode refuses the write because the folder is gone', async () => {
-      const locationNotFound = Object.assign(new Error('Location not found: /repo/wt-gone'), {
-        _tag: 'LocationNotFoundError',
-        location: { directory: '/repo/wt-gone' },
-      });
-      const persistSessionMetadata = vi.fn(async () => { throw locationNotFound; });
-      const { app } = createApp({ persistSessionMetadata });
-
-      const response = await request(app)
-        .post('/api/openchamber/sessions/ses_a/metadata')
-        .send({ patch: { openchamber: { work: { state: 'done' } } } })
-        .expect(409);
-
-      expect(response.body).toEqual({ error: 'Location not found: /repo/wt-gone', code: 'SESSION_DIRECTORY_MISSING' });
-    });
-
-    it('keeps any other failed write a plain error without the folder code', async () => {
+    it('answers a failed write with its message', async () => {
       const persistSessionMetadata = vi.fn(async () => { throw new Error('OpenCode is down'); });
       const { app } = createApp({ persistSessionMetadata });
 
@@ -678,6 +645,39 @@ describe('openchamber session routes', () => {
     expect(sessionCreateMock).toHaveBeenCalledWith({
       location: { directory: '/repo/app' },
       title: 'Side task',
+    });
+  });
+
+  it('records on the prompt the session whose agent sent it, with its title', async () => {
+    const { app } = createApp();
+    sessionGetMock.mockImplementation(async ({ sessionID }) => ({ id: sessionID, title: 'PR triage', location: { directory: '/repo/app' } }));
+    await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', prompt: 'Run this', model: 'openai/gpt-5.5', promptedBySessionId: 'ses_origin' })
+      .expect(200);
+
+    expect(sessionPromptMock).toHaveBeenCalledWith({
+      sessionID: 'ses_123',
+      text: 'Run this',
+      metadata: { openchamber: { promptedBy: { sessionID: 'ses_origin', title: 'PR triage' } } },
+    });
+  });
+
+  it('records the sender by id alone when its session cannot be read', async () => {
+    const { app } = createApp();
+    sessionGetMock.mockImplementation(async ({ sessionID }) => {
+      if (sessionID === 'ses_origin') throw new Error('not found');
+      return { id: sessionID, location: { directory: '/repo/app' } };
+    });
+    await request(app)
+      .post('/api/openchamber/sessions')
+      .send({ directory: '/repo/app', prompt: 'Run this', model: 'openai/gpt-5.5', promptedBySessionId: 'ses_origin' })
+      .expect(200);
+
+    expect(sessionPromptMock).toHaveBeenCalledWith({
+      sessionID: 'ses_123',
+      text: 'Run this',
+      metadata: { openchamber: { promptedBy: { sessionID: 'ses_origin' } } },
     });
   });
 
@@ -1633,6 +1633,90 @@ describe('openchamber session routes', () => {
     // The default-selection catalogue must not be consulted.
     expect(modelListMock).not.toHaveBeenCalled();
     expect(agentListMock).not.toHaveBeenCalled();
+  });
+
+  describe('a send to an archived session', () => {
+    const archivedTree = [
+      { id: 'ses_root', time: { created: 1, archived: 1700 } },
+      { id: 'ses_child', parentID: 'ses_root', time: { created: 1, archived: 1700 } },
+      { id: 'ses_grandchild', parentID: 'ses_child', time: { created: 1, archived: 1700 } },
+      { id: 'ses_active_child', parentID: 'ses_root', time: { created: 1 } },
+    ];
+    const useTree = (tree) => {
+      sessionGetMock.mockImplementation(async ({ sessionID }) => ({
+        ...tree.find((session) => session.id === sessionID),
+        location: { directory: '/repo/app' },
+      }));
+      sessionListMock.mockImplementation(async ({ parentID, archived }) => ({
+        data: tree.filter((session) => session.parentID === parentID && (!archived || session.time.archived)),
+      }));
+    };
+    const send = (app, sessionID) => request(app)
+      .post(`/api/openchamber/sessions/${sessionID}/send`)
+      .send({ directory: '/repo/app', prompt: 'Continue', model: 'openai/gpt-5.5' })
+      .expect(200);
+    const restoredIds = () => sessionUpdateMock.mock.calls
+      .filter(([input]) => input.archived === false)
+      .map(([input]) => input.sessionID);
+
+    it('brings a top-level session back with its archived subsessions once the prompt is accepted', async () => {
+      useTree(archivedTree);
+      const { app } = createApp();
+
+      const response = await send(app, 'ses_root');
+
+      expect(response.body.promptDispatched).toBe(true);
+      expect(restoredIds().sort()).toEqual(['ses_child', 'ses_grandchild', 'ses_root']);
+    });
+
+    it('leaves the session archived when it was archived again while the send went out', async () => {
+      const tree = archivedTree.map((session) => ({ ...session, time: { ...session.time } }));
+      useTree(tree);
+      const listChildren = sessionListMock.getMockImplementation();
+      sessionListMock.mockImplementation(async (input) => {
+        tree[0].time.archived = 1800;
+        return listChildren(input);
+      });
+      const { app } = createApp();
+
+      await send(app, 'ses_root');
+
+      expect(restoredIds()).toEqual([]);
+    });
+
+    it('leaves an archived subsession for its parent to bring back', async () => {
+      useTree(archivedTree);
+      const { app } = createApp();
+
+      await send(app, 'ses_child');
+
+      expect(restoredIds()).toEqual([]);
+    });
+
+    it('restores nothing when the prompt was not accepted', async () => {
+      useTree(archivedTree);
+      sessionPromptMock.mockResolvedValue({});
+      const { app } = createApp();
+
+      const response = await send(app, 'ses_root');
+
+      expect(response.body.promptDispatched).toBe(false);
+      expect(restoredIds()).toEqual([]);
+    }, 20_000);
+
+    it('keeps the accepted send when the restore fails', async () => {
+      useTree(archivedTree);
+      sessionUpdateMock.mockImplementation(async () => {
+        throw Object.assign(new Error('UnknownError'), { _tag: 'UnknownError' });
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { app } = createApp();
+
+      const response = await send(app, 'ses_root');
+
+      expect(response.body).toMatchObject({ action: 'send', sessionId: 'ses_root', promptDispatched: true });
+      expect(restoredIds()).toEqual(['ses_root']);
+    });
   });
 
   it('forks from a message, dispatches the prompt, and emits the new session', async () => {

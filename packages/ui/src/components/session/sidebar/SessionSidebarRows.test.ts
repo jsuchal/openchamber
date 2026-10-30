@@ -48,7 +48,7 @@ describe('SessionSidebarRows section spacing', () => {
       : null;
     return {
       mode: 'normal', sections, authoritativeSections: sections, chatGroup,
-      workItems: [item('working')], zoneSessionIds: new Set(['working']),
+      workEntries: [{ kind: 'session', item: item('working') }], zoneSessionIds: new Set(['working']),
       foldersMap: {}, groupSearchDataByGroup: new WeakMap(), normalizedQuery: '',
       collapsedProjects: new Set(), collapsedGroups: new Set(), collapsedFolders: new Set(), collapsedActivities: new Set(),
       expandedParents: new Set(), visibleCountByContainer: new Map(), pinnedSessionIds: new Set(), sessionOrderIndex: new Map(),
@@ -61,12 +61,28 @@ describe('SessionSidebarRows section spacing', () => {
     return sectionSpacingAfter(rows[index - 1], rows[index]);
   };
 
-  test('zones and projects open with the same gap', () => {
+  test('a zone opens with the widest gap, and a project after rows with a wide one', () => {
     for (const withChats of [true, false]) {
       const rows = buildSessionSidebarRowModel(input(withChats)).rows;
-      if (withChats) expect(spacingBefore(rows, 'activity-header', 'activity:work:header')).toBe('pb-2');
-      expect(spacingBefore(rows, 'project-header')).toBe('pb-2');
+      if (withChats) expect(spacingBefore(rows, 'activity-header', 'activity:work:header')).toBe('pb-5');
+      expect(spacingBefore(rows, 'project-header')).toBe('pb-3');
     }
+  });
+
+  test('the desktop captions the projects when zones list above them, with no gap between caption and project', () => {
+    const captioned = buildSessionSidebarRowModel({ ...input(true), projectsCaption: true }).rows;
+    const caption = captioned.findIndex((row) => row.kind === 'caption');
+    expect(caption).toBeGreaterThan(0);
+    expect(captioned[caption + 1]?.kind).toBe('project-header');
+    expect(sectionSpacingAfter(captioned[caption], captioned[caption + 1])).toBeUndefined();
+    expect(sectionSpacingAfter(captioned[caption - 1], captioned[caption])).toBe('pb-5');
+    expect(buildSessionSidebarRowModel(input(true)).rows.some((row) => row.kind === 'caption')).toBe(false);
+  });
+
+  test('closing the Projects caption folds every project away', () => {
+    const closed = buildSessionSidebarRowModel({ ...input(true), projectsCaption: true, collapsedActivities: new Set(['projects']) }).rows;
+    expect(closed.at(-1)?.kind).toBe('caption');
+    expect(closed.some((row) => row.kind === 'project-header')).toBe(false);
   });
 
   test('a row that ends a section is estimated as its siblings plus its gap', () => {
@@ -74,9 +90,9 @@ describe('SessionSidebarRows section spacing', () => {
     const lastBeforeProjects = rows.findIndex((row) => row.kind === 'project-header') - 1;
     const last = rows[lastBeforeProjects];
     expect(last.kind).toBe('session');
-    expect(estimateSessionSidebarRowSize(last, rows[lastBeforeProjects + 1])).toBe(last.estimateSize + 8);
+    expect(estimateSessionSidebarRowSize(last, rows[lastBeforeProjects + 1])).toBe(last.estimateSize + 12);
     // A sibling measured mid-section tells its height; the gap is added as measured.
-    expect(estimateSessionSidebarRowSize(last, rows[lastBeforeProjects + 1], { height: 30, gapBySpacing: new Map([['pb-2', 10]]) })).toBe(40);
+    expect(estimateSessionSidebarRowSize(last, rows[lastBeforeProjects + 1], { height: 30, gapBySpacing: new Map([['pb-3', 18]]) })).toBe(48);
     expect(estimateSessionSidebarRowSize(last, undefined, { height: 30 })).toBe(30);
   });
 
