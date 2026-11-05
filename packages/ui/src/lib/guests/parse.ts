@@ -7,14 +7,18 @@ import {
   GUEST_FILE_EDITOR_PATTERNS_MAX,
   GUEST_FILE_EDITOR_TITLE_MAX,
   GUEST_SERVICE_PROVIDES,
+  GUEST_SESSION_EVENT_TYPES,
   GUEST_STATUS_SECTION_HEIGHT_MAX,
   GUEST_STATUS_SECTION_HEIGHT_MIN,
   GUEST_STATUS_SECTION_TITLE_MAX,
+  GUEST_STATUS_SOURCE_INTERVAL_MAX,
+  GUEST_STATUS_SOURCE_INTERVAL_MIN,
   GUEST_SURFACE_DOCKS,
   GUEST_TOOLS_MAX,
   GUEST_TOOL_MATCH,
   GUEST_TOOL_OUTPUTS,
   isFileEditorPattern,
+  isGuestRequestPath,
 } from '@openchamber/sdk';
 import { z } from 'zod';
 
@@ -67,6 +71,57 @@ const publicSourceControlSchema = z.object({
   custom: z.boolean(),
 });
 
+// The session events a service subscribed to, as the approval dialog lists
+// them. An event type this build does not know is a newer server: the field
+// drops, never the row.
+const publicSessionEventsSchema = z.object({
+  events: z.array(z.enum(GUEST_SESSION_EVENT_TYPES)).min(1).max(GUEST_SESSION_EVENT_TYPES.length),
+  content: z.boolean(),
+});
+
+// The notification channel a `notifications` service provides, as the
+// approval dialog and the Integrations card show it. A malformed slice drops
+// the field, never the row.
+export const publicNotificationsSchema = z.object({
+  label: z.string().trim().min(1).max(64),
+  instances: z.union([
+    z.object({ kind: z.literal('fixed'), origin: z.string().trim().min(1).max(2_048) }),
+    z.object({ kind: z.literal('user'), label: z.string().trim().min(1).max(64), placeholder: z.string().trim().max(256).optional() }),
+  ]),
+  token: z.object({
+    scheme: z.enum(['bearer', 'token', 'basic', 'none']),
+    username: z.boolean(),
+    scopes: z.array(z.string().trim().min(1).max(64)).max(32),
+    createPath: z.string().trim().min(1).max(256).optional(),
+  }),
+});
+
+// The tracker a `tracker` service provides, as the approval dialog and the
+// account card show it. A malformed slice drops the field, never the row.
+const publicTrackerInstancesSchema = z.union([
+  z.object({ kind: z.literal('fixed'), origin: z.string().trim().min(1).max(2_048) }),
+  z.object({ kind: z.literal('user'), label: z.string().trim().min(1).max(64), placeholder: z.string().trim().max(256).optional() }),
+]);
+const publicTrackerSchema = z.object({
+  label: z.string().trim().min(1).max(64),
+  instances: publicTrackerInstancesSchema,
+  authMethods: z.array(z.enum(['oauth', 'token'])).max(2),
+  token: z.object({
+    scheme: z.enum(['bearer', 'token', 'basic', 'none']),
+    username: z.boolean(),
+    scopes: z.array(z.string().trim().min(1).max(64)).max(32),
+    createPath: z.string().trim().min(1).max(256).optional(),
+  }).optional(),
+  oauth: z.object({ scopes: z.array(z.string().trim().min(1).max(64)).max(32) }).optional(),
+});
+
+// The usage provider a `quota` service provides, as the approval dialog shows
+// it: the OpenCode providers whose credentials the service receives. A
+// malformed slice drops the field, never the row.
+const publicQuotaSchema = z.object({
+  providers: z.array(z.string().trim().min(1).max(64)).max(16),
+});
+
 const guestActionSchema = z.object({
   id: z.string().regex(PANEL_ID),
   label: z.string().trim().min(1),
@@ -116,11 +171,16 @@ const installedGuestSchema = z.object({
   entrySize: z.number().int().positive().optional(),
   backgroundEntry: z.string().trim().min(1).optional(),
   version: z.string().trim().min(1).max(64).optional(),
+  revision: z.number().int().positive().optional(),
   attach: z.union([z.boolean(), z.enum(['panel', 'dialog'])]).optional(),
   attachEntry: z.string().trim().min(1).optional(),
   pageEntry: z.string().trim().min(1).optional(),
   pageTitle: z.string().trim().min(1).max(200).optional(),
   statusEntry: z.string().trim().min(1).optional(),
+  statusSource: z.object({
+    path: z.string().refine(isGuestRequestPath),
+    interval: z.number().int().min(GUEST_STATUS_SOURCE_INTERVAL_MIN).max(GUEST_STATUS_SOURCE_INTERVAL_MAX),
+  }).strict().optional(),
   statusTitle: z.string().trim().min(1).max(GUEST_STATUS_SECTION_TITLE_MAX).optional(),
   statusHeight: z.number().int().min(GUEST_STATUS_SECTION_HEIGHT_MIN).max(GUEST_STATUS_SECTION_HEIGHT_MAX).optional(),
   statusDefaultExpanded: z.boolean().optional(),
@@ -130,6 +190,10 @@ const installedGuestSchema = z.object({
   origins: z.array(z.string().trim().min(1)).optional(),
   service: publicServiceSchema.optional(),
   sourceControl: publicSourceControlSchema.optional().catch(undefined),
+  sessionEvents: publicSessionEventsSchema.optional().catch(undefined),
+  notifications: publicNotificationsSchema.optional().catch(undefined),
+  tracker: publicTrackerSchema.optional().catch(undefined),
+  quota: publicQuotaSchema.optional().catch(undefined),
   actions: z.array(guestActionSchema).max(GUEST_ACTIONS_MAX).optional(),
   commands: z.array(guestCommandSchema).max(GUEST_COMMANDS_MAX).optional(),
   tools: z.array(guestToolSchema).max(GUEST_TOOLS_MAX).optional(),

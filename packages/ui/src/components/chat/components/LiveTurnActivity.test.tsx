@@ -1,5 +1,5 @@
 import React, { act } from 'react';
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, spyOn, test } from 'bun:test';
 import { plugin } from 'bun';
 import { pathToFileURL } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -18,7 +18,25 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { projectTurnRecords } from '../lib/turns/projectTurnRecords';
 import type { ChatMessageEntry, TurnChangedFile, TurnRecord } from '../lib/turns/types';
-import { LiveTurnActivity } from './LiveTurnActivity';
+import { TurnFold, TurnPagesRow } from './LiveTurnActivity';
+import { useTurnFoldContexts } from './useTurnFold';
+import { LiveFinalActivityContext, LiveTurnHoistedPagesContext } from './liveActivityContext';
+import { buildTimelineRows } from '../lib/turns/timelineRows';
+import {
+    advanceLiveToolTail,
+    planToolActivity,
+    toolActivityParts,
+    ToolActivityPlanContext,
+    type ToolActivityPlan,
+} from '../lib/turns/toolActivityGrouping';
+import { MessageSliceContext } from '../message/messageSliceContext';
+import { useWorkflowRunsStore } from '@/lib/workflows/store';
+import type { WorkflowRun } from '@/lib/workflows/model';
+import { PendingWorkflowApprovals } from '../workflows/PendingWorkflowApprovals';
+import { WorkflowsPanel } from '../workflows/WorkflowsPanel';
+import { useSessionUIStore } from '@/sync/session-ui-store';
+import { getSyncChildStores } from '@/sync/sync-refs';
+import { ChatColumnSessionContext } from '../chatColumnSession';
 
 plugin({
     name: 'live-activity-worker-url',
@@ -86,13 +104,50 @@ function turn(messages: ChatMessageEntry[]): TurnRecord {
     }, ...messages]).turns[0];
 }
 
-function Harness({ record, retired = false, changedFiles, isLatestTurn = true, onCopyMessage, onCopyTurn }: {
+// The rows a turn under a fold becomes in the list, drawn the way MessageList draws them.
+function TurnRows({ record, retired, expanded, onToggle, renderMessage, collapsedActivity = true, plan }: {
+    record: TurnRecord;
+    retired: boolean;
+    expanded: boolean;
+    onToggle: () => void;
+    renderMessage: (message: ChatMessageEntry) => React.ReactNode;
+    collapsedActivity?: boolean;
+    plan?: ToolActivityPlan;
+}) {
+    const rows = buildTimelineRows([{ kind: 'turn', key: 'turn', turn: record, isLastTurn: true, hasLaterAssistant: retired }], {
+        collapsedActivity, expandedTurns: new Map([[record.turnId, expanded]]), showReasoningTraces: true,
+        toolActivityPlans: plan ? new Map([[record.turnId, plan]]) : undefined,
+    }, []);
+    const finalMessageId = rows.find((row) => row.kind === 'turn-fold')?.finalMessageId;
+    const { hoistedPages, finalContext } = useTurnFoldContexts(record, retired, expanded, finalMessageId);
+    return <LiveTurnHoistedPagesContext.Provider value={hoistedPages}>
+        {rows.map((row) => {
+            if (row.kind === 'turn-fold') {
+                return <TurnFold key={row.key} turn={record} hasLaterAssistant={retired} expanded={expanded}
+                    finalMessageId={row.finalMessageId} onToggle={onToggle} renderMessage={renderMessage} />;
+            }
+            if (row.kind === 'turn-pages') return <TurnPagesRow key={row.key} turn={record} />;
+            if (row.kind !== 'turn-message') return null;
+            const message = record.assistantMessages.find((candidate) => candidate.info.id === row.messageId);
+            if (!message) return null;
+            return <MessageSliceContext.Provider key={row.key} value={row.slice}>
+                <ToolActivityPlanContext.Provider value={row.underFold ? null : row.toolActivityPlan}>
+                    {row.final ? <LiveFinalActivityContext.Provider value={finalContext}>{renderMessage(message)}</LiveFinalActivityContext.Provider> : renderMessage(message)}
+                </ToolActivityPlanContext.Provider>
+            </MessageSliceContext.Provider>;
+        })}
+    </LiveTurnHoistedPagesContext.Provider>;
+}
+
+function Harness({ record, retired = false, changedFiles, isLatestTurn = true, onCopyMessage, onCopyTurn, collapsedActivity = true, plan }: {
     record: TurnRecord;
     retired?: boolean;
     changedFiles?: TurnChangedFile[];
     isLatestTurn?: boolean;
     onCopyMessage?: (messageId: string) => boolean;
     onCopyTurn?: () => Promise<boolean>;
+    collapsedActivity?: boolean;
+    plan?: ToolActivityPlan;
 }) {
     const [expanded, setExpanded] = React.useState(false);
     const renderMessage = (message: ChatMessageEntry) => (
@@ -118,8 +173,9 @@ function Harness({ record, retired = false, changedFiles, isLatestTurn = true, o
         <ThemeSystemContext.Provider value={themeContext}>
             <SyncProvider sdk={sdk} directory="/project">
                 <I18nProvider>
-                    <LiveTurnActivity turn={record} hasLaterAssistant={retired} expanded={expanded}
-                        onToggle={() => setExpanded((value) => !value)} renderMessage={renderMessage} />
+                    <TurnRows record={record} retired={retired} expanded={expanded}
+                        onToggle={() => setExpanded((value) => !value)} renderMessage={renderMessage}
+                        collapsedActivity={collapsedActivity} plan={plan} />
                 </I18nProvider>
             </SyncProvider>
         </ThemeSystemContext.Provider>
@@ -143,6 +199,7 @@ describe('live Activity with the real message body', () => {
             Node: win.Node, NodeList: win.NodeList, Element: win.Element, HTMLElement: win.HTMLElement, SVGElement: win.SVGElement,
             HTMLAnchorElement: win.HTMLAnchorElement,
             MutationObserver: win.MutationObserver, ResizeObserver: win.ResizeObserver,
+            CustomEvent: win.CustomEvent, Event: win.Event,
             requestAnimationFrame: win.requestAnimationFrame.bind(win), cancelAnimationFrame: win.cancelAnimationFrame.bind(win),
             getComputedStyle: win.getComputedStyle.bind(win), IS_REACT_ACT_ENVIRONMENT: true,
         };
@@ -166,7 +223,153 @@ describe('live Activity with the real message body', () => {
     });
     afterEach(async () => {
         await act(async () => root.unmount());
+        useWorkflowRunsStore.getState().reset();
         restore();
+    });
+
+    test('keeps both proposed workflow cards outside Activity while approval is pending', async () => {
+        useUIStore.setState({ agentWorkflowFeatureAvailable: true, agentWorkflowToolEnabled: true });
+        const proposal = (id: string, messageID: string): Part => ({
+            type: 'tool', tool: 'openchamber_workflow', id, callID: id, sessionID: 'session', messageID,
+            state: { status: 'completed', input: { action: 'workflow.run' },
+                output: JSON.stringify({ ok: true, action: 'workflow.run', data: { runId: id } }),
+                time: { start: 1, end: 2 } },
+        });
+        const runs: WorkflowRun[] = ['first', 'second'].map((id) => ({
+            id, parentSessionId: 'session', directory: '/project', name: `Workflow ${id}`, description: 'Review files',
+            state: 'awaiting-approval', attempt: 0, createdAt: 1, currentPhase: null, phases: ['Review'], agents: [], logs: [],
+        }));
+        useWorkflowRunsStore.setState({ bySession: { session: { status: 'ready', runs } } });
+        const first = assistant('first-step', [proposal('first', 'first-step')], 'tool-calls');
+        await act(async () => root.render(<Harness record={turn([first])} />));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(1);
+        const second = assistant('second-step', [proposal('second', 'second-step')], 'tool-calls');
+        const record = turn([first, second, assistant('final', [text('answer', 'Choose the plans')], 'stop')]);
+        await act(async () => root.render(<Harness record={record} />));
+        const cards = () => [...container.querySelectorAll('[data-component="workflow-run"]')].map((card) => card.textContent);
+        expect(cards()).toHaveLength(2);
+        expect(cards()[0]).toContain('Workflow first');
+        expect(cards()[1]).toContain('Workflow second');
+        await act(async () => container.querySelector<HTMLButtonElement>('button[aria-controls]')?.click());
+        expect(cards()).toHaveLength(2);
+    });
+
+    test('shows every pending run missing from loaded calls, then hands it over without duplication', async () => {
+        useUIStore.setState({ agentWorkflowFeatureAvailable: true, agentWorkflowToolEnabled: true });
+        const runs: WorkflowRun[] = ['first', 'second'].map((id) => ({
+            id, parentSessionId: 'session', directory: '/project', name: `Workflow ${id}`, description: 'Review files',
+            state: 'awaiting-approval', attempt: 0, createdAt: 1, currentPhase: null, phases: [], agents: [], logs: [],
+        }));
+        useWorkflowRunsStore.setState({ bySession: { session: { status: 'ready', runs } } });
+        const draw = (messages: ChatMessageEntry[], sessionId = 'session') => <SyncProvider sdk={sdk} directory="/project">
+            <I18nProvider><PendingWorkflowApprovals sessionId={sessionId} messages={messages} /></I18nProvider>
+        </SyncProvider>;
+        await act(async () => root.render(draw([])));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(2);
+        const call: Part = {
+            type: 'tool', tool: 'openchamber_workflow', id: 'call', callID: 'call', sessionID: 'session', messageID: 'step',
+            state: { status: 'completed', input: { action: 'workflow.run' },
+                output: JSON.stringify({ ok: true, action: 'workflow.run', data: { runId: 'first' } }), time: { start: 1, end: 2 } },
+        };
+        await act(async () => root.render(draw([assistant('step', [call], 'tool-calls')])));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(1);
+        expect(container.textContent).toContain('Workflow second');
+        await act(async () => useWorkflowRunsStore.getState().apply({ ...runs[1], state: 'declined' }));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(0);
+        await act(async () => root.render(draw([], 'other')));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(0);
+    });
+
+    test('the real live row and footer share workflow call parts while the message snapshot stays stale', async () => {
+        // Happy DOM has no layout. Give the real virtualized list a viewport
+        // so its row and footer both mount rather than remaining unmeasured.
+        const geometry = spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+            return new window.DOMRect(0, 0, 720, 600);
+        });
+        const { default: MessageList } = await import('../MessageList');
+        // Leave bootstrap pending so only the test publishes the real live store.
+        const liveSdk = OpenCode.make({ baseUrl: 'http://workflow.test', fetch: () => new Promise<Response>(() => {}) });
+        useUIStore.setState({ agentWorkflowFeatureAvailable: true, agentWorkflowToolEnabled: true, activityRenderMode: 'summary' });
+        const run: WorkflowRun = {
+            id: 'streaming-run', parentSessionId: 'session', directory: '/project', name: 'Streaming approval', description: 'Review files',
+            state: 'awaiting-approval', attempt: 0, createdAt: 1, currentPhase: null, phases: [], agents: [], logs: [],
+        };
+        useWorkflowRunsStore.setState({ bySession: { session: { status: 'ready', runs: [run] } } });
+        const step = assistant('live-step', [text('progress', 'Preparing approval')]);
+        const record = turn([step]);
+        let messages = [record.userMessage, step];
+        const draw = () => <RuntimeAPIContext.Provider value={runtimeApis}>
+            <ThemeSystemContext.Provider value={themeContext}>
+                <SyncProvider sdk={liveSdk} directory="/project">
+                    <I18nProvider>
+                        <ChatColumnSessionContext.Provider value={{ sessionId: 'session', directory: '/project' }}>
+                            <MessageList sessionKey="session" directory="/project" messages={messages}
+                                sessionIsWorking activeStreamingMessageId={messages.at(-1)?.info.id} activeStreamingPhase="streaming" isLoadingOlder={false} />
+                        </ChatColumnSessionContext.Provider>
+                    </I18nProvider>
+                </SyncProvider>
+            </ThemeSystemContext.Provider>
+        </RuntimeAPIContext.Provider>;
+        await act(async () => root.render(draw()));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(1);
+        const store = getSyncChildStores().getChild('/project');
+        if (!store) throw new Error('Expected mounted directory store');
+        const call: Part = {
+            type: 'tool', tool: 'openchamber_workflow', id: 'live-call', callID: 'live-call', sessionID: 'session', messageID: 'live-step',
+            state: { status: 'completed', input: { action: 'workflow.run' },
+                output: JSON.stringify({ ok: true, action: 'workflow.run', data: { runId: run.id } }), time: { start: 1, end: 2 } },
+        };
+        await act(async () => store.setState({ part: { 'live-step': [...step.parts, call] } }));
+        expect(messages[1].parts).toEqual(step.parts);
+        expect(container.querySelectorAll('[data-turn-row] [data-component="workflow-run"]')).toHaveLength(1);
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(1);
+        await act(async () => useUIStore.setState({ activityRenderMode: 'collapsed' }));
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(1);
+        // A later step can stream while the preceding completed call still lives
+        // only in the part store. Both consumers must keep overlaying that step.
+        const next = assistant('next-step', [text('continuation', 'Continuing the work')]);
+        messages = [...messages, next];
+        await act(async () => root.render(draw()));
+        expect(container.querySelectorAll('[data-turn-row] [data-component="workflow-run"]')).toHaveLength(1);
+        expect(container.querySelectorAll('[data-component="workflow-run"]')).toHaveLength(1);
+        geometry.mockRestore();
+    });
+
+    test('the panel declines through the same endpoint and holds both approval buttons during the request', async () => {
+        useUIStore.setState({ agentWorkflowFeatureAvailable: true, agentWorkflowToolEnabled: true });
+        useSessionUIStore.setState({ currentSessionId: 'session' });
+        const run: WorkflowRun = {
+            id: 'pending', parentSessionId: 'session', directory: '/project', name: 'Review files', description: 'Review files',
+            state: 'awaiting-approval', attempt: 0, createdAt: 1, currentPhase: null, phases: [], agents: [], logs: [],
+        };
+        useWorkflowRunsStore.setState({ bySession: { session: { status: 'ready', runs: [run] } }, byDirectory: { '/project': 'ready' } });
+        const requests: { url: string; method?: string }[] = [];
+        let finish: () => void = () => {};
+        const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+            const url = String(input);
+            requests.push({ url, method: init?.method });
+            if (url.endsWith('/pending/decline')) await new Promise<void>((resolve) => { finish = resolve; });
+            return Response.json(url.includes('/saved') ? { workflows: [] } : {});
+        });
+        try {
+            await act(async () => root.render(<I18nProvider><WorkflowsPanel directory="/project" /></I18nProvider>));
+            const approve = container.querySelector<HTMLButtonElement>('button[aria-label="Run workflow"]');
+            const decline = [...container.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === "Don't run");
+            expect(approve).not.toBeNull();
+            expect(decline).not.toBeNull();
+            await act(async () => decline?.click());
+            expect(requests.filter((request) => request.url.endsWith('/pending/decline'))).toEqual([
+                { url: '/api/openchamber/workflows/pending/decline', method: 'POST' },
+            ]);
+            expect(approve?.disabled).toBe(true);
+            expect(decline?.disabled).toBe(true);
+            await act(async () => finish());
+            expect(approve?.disabled).toBe(false);
+            expect(decline?.disabled).toBe(false);
+        } finally {
+            finish();
+            fetchSpy.mockRestore();
+        }
     });
 
     test('keeps active prose and tools visible; stop folds history but leaves the answer', async () => {
@@ -403,5 +606,184 @@ describe('live Activity with the real message body', () => {
         await act(async () => changedFilesToggle()?.click());
         expect(container.textContent).toContain('file-4.ts');
         expect(container.querySelectorAll('button[aria-label^="Open src/file-"]')).toHaveLength(0);
+    });
+
+    test('groups completed calls across messages and leaves the running call as its own row', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const first = assistant('progress', [text('intro', 'Checking the source'), readPart], 'tool-calls');
+        const secondRead = { ...readPart, id: 'second', callID: 'second', messageID: 'next' };
+        const running: Part = {
+            ...readPart, id: 'running', callID: 'running', messageID: 'next',
+            state: { status: 'running', input: { filePath: '/project/live.ts' }, time: { start: 1 } },
+        };
+        const record = turn([first, assistant('next', [secondRead, running], 'tool-calls')]);
+        const plan = planToolActivity(toolActivityParts(record.assistantMessages, true), false);
+        await act(async () => root.render(<Harness record={record} collapsedActivity={false} plan={plan} />));
+        const group = container.querySelector<HTMLDetailsElement>('details[data-tool-activity-group]');
+        expect(group?.open).toBe(false);
+        expect(group?.querySelector('summary')?.textContent).toContain('read × 2');
+        expect(container.textContent).toContain('Checking the source');
+        expect(container.textContent).toContain('live.ts');
+        expect(group?.contains(container.querySelector('[title="/project/live.ts"]'))).toBe(false);
+        await act(async () => { if (group) group.open = true; });
+        expect(group?.open).toBe(true);
+    });
+
+    test('keeps the live row in place after its call finishes and folds it once another call arrives', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const first = assistant('progress', [readPart, { ...readPart, id: 'second', callID: 'second' }], 'tool-calls');
+        const running: Part = { ...readPart, id: 'live', callID: 'live', messageID: 'next', state: { status: 'running', input: { filePath: '/project/live.ts' }, time: { start: 3 } } };
+        const completed: Part = { ...running, state: { status: 'completed', input: { filePath: '/project/live.ts' }, output: 'done', time: { start: 3, end: 4 } } };
+        const later: Part = { ...running, id: 'later', callID: 'later', messageID: 'later', state: { status: 'running', input: { filePath: '/project/later.ts' }, time: { start: 5 } } };
+        const withLive = turn([first, assistant('next', [running])]);
+        let tail = advanceLiveToolTail({ turnId: 'turn', ids: [], visible: new Set() }, withLive.turnId, toolActivityParts(withLive.assistantMessages, true), true);
+        await act(async () => root.render(<Harness record={withLive} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(withLive.assistantMessages, true), false, false, tail.visible)} />));
+        const group = container.querySelector<HTMLDetailsElement>('details[data-tool-activity-group]');
+        const row = container.querySelector('[data-fixture-message="next"]');
+        expect(group?.querySelector('summary')?.textContent).toContain('read × 2');
+        expect(row?.textContent).toContain('live.ts');
+
+        const settled = turn([first, assistant('next', [completed], 'tool-calls')]);
+        tail = advanceLiveToolTail(tail, settled.turnId, toolActivityParts(settled.assistantMessages, true), true);
+        await act(async () => root.render(<Harness record={settled} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(settled.assistantMessages, true), false, false, tail.visible)} />));
+        expect(container.querySelector('details[data-tool-activity-group]')).toBe(group);
+        expect(container.querySelector('[data-fixture-message="next"]')).toBe(row);
+        expect(row?.textContent).toContain('live.ts');
+        expect(group?.querySelector('summary')?.textContent).toContain('read × 2');
+
+        const nextTurn = turn([first, assistant('next', [completed], 'tool-calls'), assistant('later', [later])]);
+        tail = advanceLiveToolTail(tail, nextTurn.turnId, toolActivityParts(nextTurn.assistantMessages, true), true);
+        await act(async () => root.render(<Harness record={nextTurn} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(nextTurn.assistantMessages, true), false, false, tail.visible)} />));
+        expect(container.querySelector('details[data-tool-activity-group]')).toBe(group);
+        expect(group?.querySelector('summary')?.textContent).toContain('read × 3');
+        expect(container.textContent).toContain('later.ts');
+    });
+
+    test('shows no group header for one finished call, even with a running call below', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const first = assistant('progress', [text('intro', 'Checking'), readPart], 'tool-calls');
+        const running: Part = { ...readPart, id: 'live', callID: 'live', messageID: 'next', state: { status: 'running', input: { filePath: '/project/live.ts' }, time: { start: 3 } } };
+        const completed: Part = { ...running, state: { status: 'completed', input: { filePath: '/project/live.ts' }, output: 'done', time: { start: 3, end: 4 } } };
+        const withLive = turn([first, assistant('next', [running])]);
+        let tail = advanceLiveToolTail({ turnId: 'turn', ids: [], visible: new Set() }, withLive.turnId, toolActivityParts(withLive.assistantMessages, true), true);
+        await act(async () => root.render(<Harness record={withLive} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(withLive.assistantMessages, true), false, false, tail.visible)} />));
+        expect(container.querySelectorAll('details[data-tool-activity-group]')).toHaveLength(0);
+        expect(container.textContent).toContain('live.ts');
+
+        // The lone finished call keeps its row until more work arrives.
+        const settled = turn([first, assistant('next', [completed], 'tool-calls')]);
+        tail = advanceLiveToolTail(tail, settled.turnId, toolActivityParts(settled.assistantMessages, true), true);
+        await act(async () => root.render(<Harness record={settled} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(settled.assistantMessages, true), false, false, tail.visible)} />));
+        expect(container.querySelectorAll('details[data-tool-activity-group]')).toHaveLength(0);
+        expect(container.textContent).toContain('live.ts');
+
+        // The next call folds the finished one into a group.
+        const later: Part = { ...completed, id: 'later', callID: 'later', messageID: 'later', state: { status: 'running', input: { filePath: '/project/later.ts' }, time: { start: 5 } } };
+        const next = turn([first, assistant('next', [completed], 'tool-calls'), assistant('later', [later])]);
+        tail = advanceLiveToolTail(tail, next.turnId, toolActivityParts(next.assistantMessages, true), true);
+        await act(async () => root.render(<Harness record={next} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(next.assistantMessages, true), false, false, tail.visible)} />));
+        const groups = container.querySelectorAll('details[data-tool-activity-group]');
+        expect(groups).toHaveLength(1);
+        expect(groups[0].querySelector('summary')?.textContent).toContain('read × 2');
+        expect(container.textContent).toContain('later.ts');
+    });
+
+    test('lists every tool without an ellipsis when the group is wide with many kinds', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const names = ['write', 'read', 'edit', 'glob', 'grep', 'shell'];
+        const parts = names.map((name) => ({ ...readPart, id: name, callID: name, tool: name, messageID: name }));
+        const messages = parts.map((part) => assistant(part.messageID, [part], 'tool-calls'));
+        const record = turn(messages);
+        await act(async () => root.render(<Harness record={record} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(record.assistantMessages, true), false)} />));
+        const summary = container.querySelector('details[data-tool-activity-group] summary');
+        expect(summary).not.toBeNull();
+        expect(summary?.textContent?.startsWith('6 Tool Calls')).toBe(true);
+        expect(/6 Tool Calls\s/.test(summary?.textContent ?? '')).toBe(true);
+        expect(summary?.textContent).not.toContain('Tool Calls ·');
+        expect(summary?.querySelector('.tabular-nums')?.textContent).toBe('6');
+        for (const name of names) expect(summary?.textContent).toContain(name);
+        expect(summary?.textContent).not.toContain('…');
+        expect(summary?.querySelector('.truncate')).toBeNull();
+    });
+
+    test('keeps a group open when earlier calls are revealed above it', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const first = { ...readPart, id: 'group-a', callID: 'group-a', messageID: 'group' };
+        const second = { ...readPart, id: 'group-b', callID: 'group-b', messageID: 'group' };
+        const grouped = turn([assistant('group', [first, second], 'tool-calls')]);
+        await act(async () => root.render(<Harness record={grouped} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(grouped.assistantMessages, true), false)} />));
+        const details = container.querySelector<HTMLDetailsElement>('details[data-tool-activity-group]');
+        expect(details?.open).toBe(false);
+        await act(async () => {
+            if (!details) return;
+            details.open = true;
+            details.dispatchEvent(new Event('toggle'));
+        });
+        expect(details?.open).toBe(true);
+
+        const earlier = { ...readPart, id: 'earlier', callID: 'earlier', messageID: 'earlier' };
+        const record = turn([assistant('earlier', [earlier], 'tool-calls'), assistant('group', [first, second], 'tool-calls')]);
+        await act(async () => root.render(<Harness record={record} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(record.assistantMessages, true), false)} />));
+        const after = container.querySelector<HTMLDetailsElement>('details[data-tool-activity-group]');
+        expect(after?.querySelector('summary')?.textContent).toContain('read × 3');
+        expect(after?.open).toBe(true);
+    });
+
+    test('groups a background shell once its job is no longer running', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const call = (id: string): Part => ({ ...readPart, id, callID: id, messageID: id });
+        const background: Part = {
+            ...readPart, id: 'bg', callID: 'bg', tool: 'shell', messageID: 'bg',
+            state: { status: 'completed', input: {}, output: '', metadata: { status: 'running', shellID: 'sh-1' }, time: { start: 1, end: 2 } },
+        };
+        const parts = [call('r1'), background, call('r2'), call('r3')];
+        const record = turn([assistant('m', parts, 'tool-calls')]);
+        const activity = toolActivityParts(record.assistantMessages, true);
+        await act(async () => root.render(<Harness record={record} collapsedActivity={false}
+            plan={planToolActivity(activity, false, false, undefined, new Set(['bg']))} />));
+        const whileRunning = [...container.querySelectorAll('details[data-tool-activity-group] summary')]
+            .map((summary) => summary.textContent ?? '');
+        expect(whileRunning.some((text) => text.includes('read × 2'))).toBe(true);
+        expect(whileRunning.some((text) => text.includes('shell'))).toBe(false);
+
+        await act(async () => root.render(<Harness record={record} collapsedActivity={false}
+            plan={planToolActivity(activity, false, false, undefined, new Set())} />));
+        const finished = [...container.querySelectorAll('details[data-tool-activity-group] summary')]
+            .map((summary) => summary.textContent ?? '');
+        expect(finished).toHaveLength(1);
+        expect(finished[0]).toContain('4 Tool Calls');
+        expect(finished[0]).toContain('shell');
+    });
+
+    test('releases transcript follow when a group opens', async () => {
+        if (readPart.type !== 'tool') throw new Error('Expected tool fixture');
+        const record = turn([assistant('a', [
+            { ...readPart, id: 'a', callID: 'a', messageID: 'a' },
+            { ...readPart, id: 'b', callID: 'b', messageID: 'b' },
+        ], 'tool-calls')]);
+        await act(async () => root.render(<Harness record={record} collapsedActivity={false}
+            plan={planToolActivity(toolActivityParts(record.assistantMessages, true), false)} />));
+        const summary = container.querySelector<HTMLElement>('details[data-tool-activity-group] summary');
+        expect(summary).not.toBeNull();
+        let expands = 0;
+        const listener = () => { expands += 1; };
+        container.addEventListener('openchamber:row-expand', listener);
+        await act(async () => {
+            // Activation inputs run before the details opens, unlike `toggle`.
+            summary?.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
+            summary?.click();
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        container.removeEventListener('openchamber:row-expand', listener);
+        expect(expands).toBeGreaterThanOrEqual(1);
     });
 });

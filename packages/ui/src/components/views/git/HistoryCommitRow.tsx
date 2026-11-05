@@ -16,10 +16,12 @@ import { PierreDiffViewer } from '@/components/views/PierreDiffViewer';
 import { getLanguageFromExtension } from '@/lib/toolHelpers';
 import type { LanedCommit } from './gitGraph';
 import { GitGraphSegment } from './GitGraphSegment';
+import { ButtonTooltip } from '@/components/ui/action-toolbar';
 import * as git from '@/lib/gitApi';
 import { toast } from '@/components/ui/toast';
 import { formatDateTimeForPreference } from '@/lib/timeFormat';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 const HISTORY_DIFF_REQUEST_TIMEOUT_MS = 15000;
 const HISTORY_DIFF_LARGE_CHANGED_LINES = 500;
@@ -435,7 +437,7 @@ export const HistoryCommitRow = React.memo(({
           {/* Action buttons */}
           {isGraphMode && pendingAction ? (
             /* Confirmation banner — replaces the button row while an action is pending */
-            <div className="flex items-center gap-2 py-2 border-b border-border/30 mb-2">
+            <div className="flex items-center gap-2 py-2 border-b border-edge-muted mb-2">
               <span className="typography-micro text-muted-foreground flex-1 min-w-0">
                 {t(`gitView.history.actions.${pendingAction}Confirm` as never)}
               </span>
@@ -458,13 +460,15 @@ export const HistoryCommitRow = React.memo(({
               </Button>
             </div>
           ) : isGraphMode ? (
-            <div className="flex flex-wrap items-center gap-1.5 py-2 border-b border-border/30 mb-2">
-              <Button variant="outline" size="xs" className="h-6"
-                disabled={actionLoading !== null}
-                onClick={(e) => { e.stopPropagation(); setPendingAction('checkout'); }}
-              >
-                {t('gitView.history.actions.checkout')}
-              </Button>
+            <div className="flex flex-wrap items-center gap-1.5 py-2 border-b border-edge-muted mb-2">
+              <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.checkoutCommit')}>
+                <Button variant="outline" size="xs" className="h-6"
+                  disabled={actionLoading !== null}
+                  onClick={(e) => { e.stopPropagation(); setPendingAction('checkout'); }}
+                >
+                  {t('gitView.history.actions.checkout')}
+                </Button>
+              </ButtonTooltip>
 
               {showCreateBranch ? (
                 <div className="flex items-center gap-1">
@@ -489,43 +493,51 @@ export const HistoryCommitRow = React.memo(({
                   </Button>
                 </div>
               ) : (
-                <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
-                  onClick={(e) => { e.stopPropagation(); setShowCreateBranch(true); }}
-                >
-                  {t('gitView.history.actions.createBranch')}
-                </Button>
+                <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.branchFromCommit')}>
+                  <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
+                    onClick={(e) => { e.stopPropagation(); setShowCreateBranch(true); }}
+                  >
+                    {t('gitView.history.actions.createBranch')}
+                  </Button>
+                </ButtonTooltip>
               )}
 
-              <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
-                disabled={actionLoading !== null}
-                onClick={(e) => { e.stopPropagation(); setPendingAction('cherryPick'); }}
-              >
-                {t('gitView.history.actions.cherryPick')}
-              </Button>
+              <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.cherryPickCommit')}>
+                <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
+                  disabled={actionLoading !== null}
+                  onClick={(e) => { e.stopPropagation(); setPendingAction('cherryPick'); }}
+                >
+                  {t('gitView.history.actions.cherryPick')}
+                </Button>
+              </ButtonTooltip>
 
-              <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
-                disabled={actionLoading !== null}
-                onClick={(e) => { e.stopPropagation(); setPendingAction('revert'); }}
-              >
-                {t('gitView.history.actions.revert')}
-              </Button>
+              <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.revertCommit')}>
+                <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
+                  disabled={actionLoading !== null}
+                  onClick={(e) => { e.stopPropagation(); setPendingAction('revert'); }}
+                >
+                  {t('gitView.history.actions.revert')}
+                </Button>
+              </ButtonTooltip>
 
               {/* Reset: dropdown first to pick mode, then confirmation banner */}
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className={SECONDARY_ACTION_CLASS}
-                    disabled={actionLoading !== null}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {actionLoading === 'reset'
-                      ? <Icon name="loader-4" className="size-3 animate-spin me-1" />
-                      : null}
-                    {t('gitView.history.actions.reset')}
-                  </Button>
-                </DropdownMenuTrigger>
+                <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.resetToCommit')}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className={SECONDARY_ACTION_CLASS}
+                      disabled={actionLoading !== null}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {actionLoading === 'reset'
+                        ? <Icon name="loader-4" className="size-3 animate-spin me-1" />
+                        : null}
+                      {t('gitView.history.actions.reset')}
+                    </Button>
+                  </DropdownMenuTrigger>
+                </ButtonTooltip>
                 <DropdownMenuContent align="start" className="min-w-max">
                   {(['soft', 'mixed', 'hard'] as const).map((mode) => (
                     <DropdownMenuItem
@@ -542,19 +554,23 @@ export const HistoryCommitRow = React.memo(({
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
-                disabled={actionLoading !== null}
-                onClick={(e) => { e.stopPropagation(); setPendingAction('merge'); }}
-              >
-                {t('gitView.history.actions.merge')}
-              </Button>
+              <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.mergeCommit')}>
+                <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
+                  disabled={actionLoading !== null}
+                  onClick={(e) => { e.stopPropagation(); setPendingAction('merge'); }}
+                >
+                  {t('gitView.history.actions.merge')}
+                </Button>
+              </ButtonTooltip>
 
-              <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
-                disabled={actionLoading !== null}
-                onClick={(e) => { e.stopPropagation(); setPendingAction('rebase'); }}
-              >
-                {t('gitView.history.actions.rebase')}
-              </Button>
+              <ButtonTooltip sideOffset={8} label={t('contextTooltips.git.rebaseOnCommit')}>
+                <Button variant="ghost" size="xs" className={SECONDARY_ACTION_CLASS}
+                  disabled={actionLoading !== null}
+                  onClick={(e) => { e.stopPropagation(); setPendingAction('rebase'); }}
+                >
+                  {t('gitView.history.actions.rebase')}
+                </Button>
+              </ButtonTooltip>
             </div>
           ) : null}
 
@@ -609,7 +625,7 @@ export const HistoryCommitRow = React.memo(({
                   </button>
 
                   {openDiffPaths.has(file.path) && (
-                    <div className="max-h-[400px] overflow-y-auto rounded border border-border/40 mx-2 mb-1" data-diff-virtual-root data-diff-virtual-content>
+                    <ScrollableOverlay outerClassName="max-h-[400px] w-auto rounded border border-edge-muted mx-2 mb-1" data-diff-virtual-root data-diff-virtual-content>
                       {file.changeType === 'R' ? (
                         <div className="px-3 py-2 text-sm text-muted-foreground">{t('gitView.history.renamedNoDiff')}</div>
                       ) : file.isBinary ? (
@@ -668,7 +684,7 @@ export const HistoryCommitRow = React.memo(({
                             />
                         );
                       })()}
-                    </div>
+                    </ScrollableOverlay>
                   )}
                 </li>
               ))}
